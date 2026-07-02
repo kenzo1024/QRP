@@ -1,0 +1,162 @@
+using System.Collections.Generic;
+using UnityEngine;
+
+namespace Rendering.MatDataTransfer.Runtime
+{
+    public partial class MatDataTransferFeature
+    {
+        private readonly List<MatDataTransferInstance> m_LiveInstances =
+            new List<MatDataTransferInstance>();
+        private InstanceRegister m_InstanceRegister;
+
+        private InstanceRegister InstanceRegister => m_InstanceRegister;
+
+        internal static int NormalizeCapacity(int capacity)
+        {
+            return Mathf.Max(MatDataTransferFeature.MinInstanceCount, capacity);
+        }
+
+        private void InitializeInstanceRegister(int capacity)
+        {
+            capacity = NormalizeCapacity(capacity);
+            m_InstanceRegister = new InstanceRegister(capacity);
+            m_LiveInstances.Clear();
+        }
+
+        // Called from OnValidate — no live-instance sync, just clamp and apply.
+        private int ApplyInstanceCapacity(int maxInstanceCount)
+        {
+            maxInstanceCount = NormalizeCapacity(maxInstanceCount);
+            EnsureRegistry(maxInstanceCount);
+
+            int minimum = GetActiveInstanceCount();
+            if (maxInstanceCount < minimum)
+                maxInstanceCount = minimum;
+
+            if (m_InstanceRegister.TrySetCapacity(maxInstanceCount, out bool remapped) && remapped)
+                ClearQueuedRequests();
+
+            return m_InstanceRegister.Capacity;
+        }
+
+        // Called at runtime when capacity is changed externally — syncs live instances first.
+        private bool TrySetInstanceCapacity(int maxInstanceCount, out int appliedCapacity)
+        {
+            maxInstanceCount = NormalizeCapacity(maxInstanceCount);
+            EnsureRegistry(maxInstanceCount);
+            SyncLiveInstances();
+
+            maxInstanceCount = Mathf.Max(maxInstanceCount, m_LiveInstances.Count);
+
+            if (!m_InstanceRegister.TrySetCapacity(maxInstanceCount, out bool remapped))
+            {
+                appliedCapacity = m_InstanceRegister.Capacity;
+                return false;
+            }
+
+            appliedCapacity = m_InstanceRegister.Capacity;
+            if (remapped)
+                ClearQueuedRequests();
+
+            SyncLiveInstances();
+            return true;
+        }
+
+        internal void CopyInstanceRegisterEntries(List<InstanceRegisterEntry> results)
+        {
+            if (m_InstanceRegister == null)
+            {
+                results?.Clear();
+                return;
+            }
+
+            SyncLiveInstances();
+            m_InstanceRegister.CopyEntriesTo(results);
+        }
+
+        private void SyncLiveInstances()
+        {
+            if (!IsPrimaryInstance() || m_InstanceRegister == null)
+                return;
+
+            MatDataTransferInstance.CopyLiveInstancesTo(m_LiveInstances);
+            ReleaseInactiveRegisteredInstances();
+            RegisterLiveInstances();
+        }
+
+        private void ClearInstanceRegister()
+        {
+            m_InstanceRegister?.Clear();
+            m_InstanceRegister = null;
+            m_LiveInstances.Clear();
+        }
+
+        private int GetSyncedActiveInstanceCount()
+        {
+            SyncLiveInstances();
+            return GetActiveInstanceCount();
+        }
+
+        private void EnsureRegistry(int capacity)
+        {
+            if (m_InstanceRegister == null)
+                m_InstanceRegister = new InstanceRegister(NormalizeCapacity(capacity));
+        }
+
+        private int GetActiveInstanceCount()
+        {
+            if (m_InstanceRegister == null)
+                return 0;
+
+            m_InstanceRegister.PruneMissingInstances();
+            return m_InstanceRegister.ActiveCount;
+        }
+
+        private void ReleaseInactiveRegisteredInstances()
+        {
+            m_InstanceRegister.ForEach(ReleaseIfNotLive);
+        }
+
+        private void ReleaseIfNotLive(MatDataTransferInstance instance)
+        {
+            if (m_LiveInstances.Contains(instance))
+                return;
+
+            if (m_InstanceRegister.Release(instance, out int releasedId))
+                ClearRequestsForInstanceId(releasedId);
+        }
+
+        private void RegisterLiveInstances()
+        {
+            for (int i = 0; i < m_LiveInstances.Count; i++)
+                RegisterLiveInstance(m_LiveInstances[i]);
+        }
+
+        private void RegisterLiveInstance(MatDataTransferInstance instance)
+        {
+            if (instance == null || m_InstanceRegister.IsOwner(instance.InstanceId, instance))
+                return;
+
+            int previousId = instance.InstanceId;
+            if (previousId >= 0)
+            {
+                ClearQueuedRequests();
+                instance.SetRegisteredInstanceId(-1);
+            }
+
+            if (!m_InstanceRegister.TryRegister(instance, out _))
+                return;
+
+            instance.OnRegisteredByFeature();
+        }
+
+        internal bool TrySetMaxInstanceCount(int maxInstanceCount)
+        {
+            if (!TrySetInstanceCapacity(maxInstanceCount, out int appliedCapacity))
+                return false;
+
+            m_MaxInstanceCount = appliedCapacity;
+            return true;
+        }
+    }
+}

@@ -1,0 +1,20 @@
+{
+    "name": "REP.MatDataTransfer.Editor",
+    "rootNamespace": "",
+    "references": [
+        "GUID:8b923f3ebe1b2b04680c6bdac51ed8b8",
+        "GUID:b2706291769078c409cefa042f1b32d6",
+        "Unity.RenderPipelines.Universal.Runtime"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
