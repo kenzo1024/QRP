@@ -9,6 +9,12 @@ namespace Rendering.MatDataTransfer.Editor
         private const float DefaultLabelWidth = 88f;
         private const float FoldoutSummaryGap = 8f;
         public const float FoldoutPanelLeftPadding = 14f;
+        private static readonly Color ListItemEvenColor = EditorGUIUtility.isProSkin
+            ? new Color(0.20f, 0.20f, 0.20f, 1f)
+            : new Color(0.89f, 0.89f, 0.89f, 1f);
+        private static readonly Color ListItemOddColor = EditorGUIUtility.isProSkin
+            ? new Color(0.30f, 0.30f, 0.30f, 1f)
+            : new Color(0.83f, 0.83f, 0.83f, 1f);
         private static readonly Color DescriptionColor = EditorGUIUtility.isProSkin
             ? new Color(0.64f, 0.64f, 0.64f)
             : new Color(0.42f, 0.42f, 0.42f);
@@ -18,6 +24,11 @@ namespace Rendering.MatDataTransfer.Editor
         private static GUIStyle s_Description;
         private static GUIStyle s_RightAlignedDescription;
         private static GUIStyle s_Foldout;
+        private static GUIStyle s_ListContainer;
+        private static GUIStyle s_ListItemEven;
+        private static GUIStyle s_ListItemOdd;
+        private static Texture2D s_ListItemEvenTexture;
+        private static Texture2D s_ListItemOddTexture;
 
         public static GUIStyle Title
         {
@@ -335,6 +346,16 @@ namespace Rendering.MatDataTransfer.Editor
             return new PanelScope();
         }
 
+        public static IDisposable BeginAlternatingListLayout()
+        {
+            return new ListScope();
+        }
+
+        public static IDisposable BeginAlternatingListItemLayout(int itemIndex)
+        {
+            return new ListItemScope(itemIndex);
+        }
+
         public static IDisposable BeginIndentedPanelLayout(float leftPadding)
         {
             return new IndentedPanelScope(leftPadding, null);
@@ -386,6 +407,77 @@ namespace Rendering.MatDataTransfer.Editor
             return Mathf.Min(desiredWidth, availableWidth);
         }
 
+        private static GUIStyle ListContainer
+        {
+            get
+            {
+                if (s_ListContainer == null)
+                {
+                    s_ListContainer = new GUIStyle(GUIStyle.none)
+                    {
+                        padding = new RectOffset(0, 0, 0, 0),
+                        margin = new RectOffset(0, 0, 0, 0)
+                    };
+                }
+
+                return s_ListContainer;
+            }
+        }
+
+        private static GUIStyle GetListItemStyle(int itemIndex)
+        {
+            bool isEven = itemIndex % 2 == 0;
+            GUIStyle style = isEven ? s_ListItemEven : s_ListItemOdd;
+            if (style != null)
+                return style;
+
+            style = new GUIStyle(GUIStyle.none)
+            {
+                padding = new RectOffset(0, 0, 2, 2),
+                margin = new RectOffset(0, 0, 0, 1),
+                normal =
+                {
+                    background = isEven
+                        ? GetListItemEvenTexture()
+                        : GetListItemOddTexture()
+                }
+            };
+
+            if (isEven)
+                s_ListItemEven = style;
+            else
+                s_ListItemOdd = style;
+
+            return style;
+        }
+
+        private static Texture2D GetListItemEvenTexture()
+        {
+            if (s_ListItemEvenTexture == null)
+                s_ListItemEvenTexture = CreateSolidTexture(ListItemEvenColor);
+
+            return s_ListItemEvenTexture;
+        }
+
+        private static Texture2D GetListItemOddTexture()
+        {
+            if (s_ListItemOddTexture == null)
+                s_ListItemOddTexture = CreateSolidTexture(ListItemOddColor);
+
+            return s_ListItemOddTexture;
+        }
+
+        private static Texture2D CreateSolidTexture(Color color)
+        {
+            Texture2D texture = new Texture2D(1, 1)
+            {
+                hideFlags = HideFlags.HideAndDontSave
+            };
+            texture.SetPixel(0, 0, color);
+            texture.Apply();
+            return texture;
+        }
+
         private sealed class PanelScope : IDisposable
         {
             private readonly EditorGUILayout.VerticalScope m_Scope;
@@ -401,6 +493,36 @@ namespace Rendering.MatDataTransfer.Editor
             public void Dispose()
             {
                 EditorGUI.indentLevel = m_IndentLevel;
+                m_Scope.Dispose();
+            }
+        }
+
+        private sealed class ListScope : IDisposable
+        {
+            private readonly EditorGUILayout.VerticalScope m_Scope;
+
+            public ListScope()
+            {
+                m_Scope = new EditorGUILayout.VerticalScope(ListContainer, GUILayout.ExpandWidth(true));
+            }
+
+            public void Dispose()
+            {
+                m_Scope.Dispose();
+            }
+        }
+
+        private sealed class ListItemScope : IDisposable
+        {
+            private readonly EditorGUILayout.VerticalScope m_Scope;
+
+            public ListItemScope(int itemIndex)
+            {
+                m_Scope = new EditorGUILayout.VerticalScope(GetListItemStyle(itemIndex), GUILayout.ExpandWidth(true));
+            }
+
+            public void Dispose()
+            {
                 m_Scope.Dispose();
             }
         }

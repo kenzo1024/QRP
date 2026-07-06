@@ -13,7 +13,7 @@ namespace Rendering.MatDataTransfer.Runtime
         internal IReadOnlyList<MaterialWriteCommand> Resolve(
             IReadOnlyList<ShaderPropertyCatalog> catalogs,
             InstanceRegister registry,
-            List<MaterialParameterSubmitPayload> payloads)
+            List<ParamTransferPayload> payloads)
         {
             m_Groups.Clear();
             m_Commands.Clear();
@@ -33,62 +33,58 @@ namespace Rendering.MatDataTransfer.Runtime
         private void AddPayload(
             IReadOnlyList<ShaderPropertyCatalog> catalogs,
             InstanceRegister registry,
-            MaterialParameterSubmitPayload payload)
+            ParamTransferPayload payload)
         {
-            if (!TryResolveTargets(registry, payload, out List<RendererMaterialBinding> targets, out string gameObjectPath))
+            if (!TryResolveTarget(registry, payload, out RendererMaterialBinding rendererBinding, out string gameObjectPath))
                 return;
 
-            for (int i = 0; i < targets.Count; i++)
+            ParamTransferPayload resolvedPayload = payload;
+            resolvedPayload.Identity.Binding = new ParamRendererBinding(rendererBinding);
+
+            string shaderName = rendererBinding.ShaderName;
+            if (string.IsNullOrEmpty(shaderName))
+                return;
+
+            if (!MaterialBindingResolver.TryGetProperty(
+                catalogs,
+                shaderName,
+                resolvedPayload.Identity.SemanticKey,
+                out ShaderPropertyCatalog matchedCatalog,
+                out CatalogProperty matchedProperty))
             {
-                RendererMaterialBinding rendererBinding = targets[i];
-                MaterialParameterSubmitPayload resolvedPayload = payload;
-                resolvedPayload.RendererBinding = new ParamRendererBinding(rendererBinding);
-
-                string shaderName = rendererBinding.ShaderName;
-                if (string.IsNullOrEmpty(shaderName))
-                    continue;
-
-                if (!MaterialBindingResolver.TryGetProperty(
-                    catalogs,
-                    shaderName,
-                    resolvedPayload.Identity.SemanticKey,
-                    out ShaderPropertyCatalog matchedCatalog,
-                    out CatalogProperty matchedProperty))
-                {
-                    continue;
-                }
-
-                if (!IsTypeCompatible(matchedProperty.PropertyInfo.ValueType, resolvedPayload.Value.Type))
-                    continue;
-
-                string catalogName = matchedCatalog != null ? matchedCatalog.name : string.Empty;
-                ResolvedMaterialBinding bindingResolution = ResolvedMaterialBinding.FromCatalog(
-                    matchedProperty,
-                    matchedProperty.SuggestedSemanticKey,
-                    shaderName,
-                    catalogName);
-
-                resolvedPayload.Identity.SemanticKey = matchedProperty.SuggestedSemanticKey;
-
-                RequestGroupKey key = new RequestGroupKey(
-                    resolvedPayload.InstanceId,
-                    resolvedPayload.RendererBinding.RendererPathId,
-                    resolvedPayload.RendererBinding.MaterialSlot,
-                    matchedProperty.SuggestedSemanticKey);
-
-                if (!m_Groups.TryGetValue(key, out List<ResolvedMaterialRequest> group))
-                {
-                    group = new List<ResolvedMaterialRequest>();
-                    m_Groups.Add(key, group);
-                }
-
-                group.Add(new ResolvedMaterialRequest(
-                    resolvedPayload,
-                    matchedProperty,
-                    bindingResolution,
-                    rendererBinding.Renderer,
-                    gameObjectPath));
+                return;
             }
+
+            if (!IsTypeCompatible(matchedProperty.PropertyInfo.ValueType, resolvedPayload.Identity.Value.Type))
+                return;
+
+            string catalogName = matchedCatalog != null ? matchedCatalog.name : string.Empty;
+            ResolvedMaterialBinding bindingResolution = ResolvedMaterialBinding.FromCatalog(
+                matchedProperty,
+                matchedProperty.SuggestedSemanticKey,
+                shaderName,
+                catalogName);
+
+            resolvedPayload.Identity.SemanticKey = matchedProperty.SuggestedSemanticKey;
+
+            RequestGroupKey key = new RequestGroupKey(
+                GetInstanceId(resolvedPayload),
+                resolvedPayload.Identity.Binding.RendererId,
+                resolvedPayload.Identity.Binding.MaterialSlot,
+                matchedProperty.SuggestedSemanticKey);
+
+            if (!m_Groups.TryGetValue(key, out List<ResolvedMaterialRequest> group))
+            {
+                group = new List<ResolvedMaterialRequest>();
+                m_Groups.Add(key, group);
+            }
+
+            group.Add(new ResolvedMaterialRequest(
+                resolvedPayload,
+                matchedProperty,
+                bindingResolution,
+                rendererBinding.Renderer,
+                gameObjectPath));
         }
 
         private void ResolveGroup(List<ResolvedMaterialRequest> group)
@@ -98,12 +94,30 @@ namespace Rendering.MatDataTransfer.Runtime
 
             group.Sort(CompareRequestStrength);
             ResolvedMaterialRequest strongest = group[group.Count - 1];
+            RecordOverriddenRequests(group, strongest);
             m_Commands.Add(new MaterialWriteCommand(
                 strongest.Payload,
                 strongest.Property,
                 strongest.BindingResolution,
                 strongest.Renderer,
                 strongest.GameObjectPath));
+        }
+
+        private static void RecordOverriddenRequests(
+            List<ResolvedMaterialRequest> group,
+            ResolvedMaterialRequest strongest)
+        {
+            for (int i = 0; i < group.Count - 1; i++)
+            {
+                ResolvedMaterialRequest request = group[i];
+                ParamTransferPayload payload = request.Payload;
+                MatDataTransferLogging.CaptureResolvedSnapshot(
+                    ref payload,
+                    request.BindingResolution,
+                    ParamSubmitStep.Overridden("Resolve.Conflict", strongest.Payload.Identity.SourceId),
+                    request.GameObjectPath,
+                    request.Renderer);
+            }
         }
 
         private static int CompareRequestStrength(ResolvedMaterialRequest left, ResolvedMaterialRequest right)
@@ -125,37 +139,42 @@ namespace Rendering.MatDataTransfer.Runtime
             return bindingType == requestType;
         }
 
-        private static bool TryResolveTargets(
+        private static bool TryResolveTarget(
             InstanceRegister registry,
-            MaterialParameterSubmitPayload payload,
-            out List<RendererMaterialBinding> bindings,
+            ParamTransferPayload payload,
+            out RendererMaterialBinding binding,
             out string gameObjectPath)
         {
-            bindings = null;
+            binding = null;
             gameObjectPath = string.Empty;
 
-            if (registry == null || !registry.TryGet(payload.InstanceId, out MatDataTransferInstance instance))
+            if (registry == null || !registry.TryGet(GetInstanceId(payload), out MatDataTransferInstance instance))
                 return false;
 
             gameObjectPath = MatDataTransferFeature.GetTransformPath(instance.transform);
-            bindings = instance.QueryBindingsByTrace(
-                payload.RendererBinding.RendererPathId,
-                payload.RendererBinding.MaterialSlot);
+            binding = instance.QueryBinding(payload.Identity.Binding);
 
-            return bindings != null && bindings.Count > 0;
+            return binding != null;
+        }
+
+        private static int GetInstanceId(ParamTransferPayload payload)
+        {
+            return payload.Identity.Target != null
+                ? payload.Identity.Target.InstanceId
+                : -1;
         }
 
         private readonly struct RequestGroupKey : IEquatable<RequestGroupKey>
         {
             private readonly int m_InstanceId;
-            private readonly string m_RendererPathId;
+            private readonly int m_RendererId;
             private readonly int m_MaterialSlot;
             private readonly string m_SemanticKey;
 
-            public RequestGroupKey(int instanceId, string rendererPathId, int materialSlot, string semanticKey)
+            public RequestGroupKey(int instanceId, int rendererId, int materialSlot, string semanticKey)
             {
                 m_InstanceId = instanceId;
-                m_RendererPathId = rendererPathId ?? string.Empty;
+                m_RendererId = rendererId;
                 m_MaterialSlot = materialSlot;
                 m_SemanticKey = semanticKey ?? string.Empty;
             }
@@ -163,7 +182,7 @@ namespace Rendering.MatDataTransfer.Runtime
             public bool Equals(RequestGroupKey other)
             {
                 return m_InstanceId == other.m_InstanceId
-                    && string.Equals(m_RendererPathId, other.m_RendererPathId, StringComparison.Ordinal)
+                    && m_RendererId == other.m_RendererId
                     && m_MaterialSlot == other.m_MaterialSlot
                     && string.Equals(m_SemanticKey, other.m_SemanticKey, StringComparison.Ordinal);
             }
@@ -178,7 +197,7 @@ namespace Rendering.MatDataTransfer.Runtime
                 unchecked
                 {
                     int hash = m_InstanceId;
-                    hash = (hash * 397) ^ StringComparer.Ordinal.GetHashCode(m_RendererPathId);
+                    hash = (hash * 397) ^ m_RendererId;
                     hash = (hash * 397) ^ m_MaterialSlot;
                     hash = (hash * 397) ^ StringComparer.Ordinal.GetHashCode(m_SemanticKey);
                     return hash;
@@ -188,14 +207,14 @@ namespace Rendering.MatDataTransfer.Runtime
 
         private readonly struct ResolvedMaterialRequest
         {
-            public readonly MaterialParameterSubmitPayload Payload;
+            public readonly ParamTransferPayload Payload;
             public readonly CatalogProperty Property;
             public readonly ResolvedMaterialBinding BindingResolution;
             public readonly Renderer Renderer;
             public readonly string GameObjectPath;
 
             public ResolvedMaterialRequest(
-                MaterialParameterSubmitPayload payload,
+                ParamTransferPayload payload,
                 CatalogProperty property,
                 ResolvedMaterialBinding bindingResolution,
                 Renderer renderer,

@@ -8,14 +8,11 @@ namespace Rendering.MatDataTransfer.Runtime
             new List<IMatDataTransferRequestProvider>();
         private readonly Dictionary<string, IMatDataTransferRequestProvider> m_ProviderMap =
             new Dictionary<string, IMatDataTransferRequestProvider>();
-        private GenericMaterialParameterProvider m_GenericProvider;
 
         private void InitializeProviders()
         {
             DisposeProviders();
-
-            if (IsGenericMaterialParameterProviderEnabled)
-                EnsureGenericProviderRegistered();
+            RegisterBuiltInProviders();
         }
 
         private IMatDataTransferRequestProvider GetProvider(string providerName)
@@ -26,12 +23,6 @@ namespace Rendering.MatDataTransfer.Runtime
             return m_ProviderMap.TryGetValue(providerName, out IMatDataTransferRequestProvider provider)
                 ? provider
                 : null;
-        }
-
-        private bool IsGenericProviderReady()
-        {
-            return m_GenericProvider != null
-                && ReferenceEquals(GetProvider(GenericMaterialParameterProvider.ProviderName), m_GenericProvider);
         }
 
         private void SubmitRequests(MaterialWriteContext context)
@@ -47,7 +38,7 @@ namespace Rendering.MatDataTransfer.Runtime
 
             m_Providers.Clear();
             m_ProviderMap.Clear();
-            m_GenericProvider = null;
+            OnProvidersDisposed();
         }
 
         private void Register(IMatDataTransferRequestProvider provider)
@@ -65,20 +56,7 @@ namespace Rendering.MatDataTransfer.Runtime
             m_ProviderMap.Add(provider.Name, provider);
         }
 
-        private void EnsureGenericProviderRegistered()
-        {
-            IMatDataTransferRequestProvider existing = GetProvider(GenericMaterialParameterProvider.ProviderName);
-            if (existing is GenericMaterialParameterProvider genericProvider)
-            {
-                m_GenericProvider = genericProvider;
-                return;
-            }
-
-            if (existing != null)
-                return;
-
-            m_GenericProvider = new GenericMaterialParameterProvider();
-            Register(m_GenericProvider);
-        }
+        partial void RegisterBuiltInProviders();
+        partial void OnProvidersDisposed();
     }
 }

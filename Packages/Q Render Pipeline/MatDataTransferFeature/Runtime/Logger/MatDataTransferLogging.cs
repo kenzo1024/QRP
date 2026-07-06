@@ -4,25 +4,67 @@ using UnityEngine;
 
 namespace Rendering.MatDataTransfer.Runtime
 {
-    public class MatDataTransferLogging : IMatDataTransferLogging, IDisposable
+    public sealed class MatDataTransferLogging : IMatDataTransferLogging, IDisposable
     {
+        public const int DefaultMaxTimelineFramesValue = 128;
+
         private const int MaxEditorTimelineRecords = 10000;
         private const int MaxFileRecordsPerSession = 10000;
         private const string FileDirectoryName = "MatDataTransferLogs";
 
         private readonly List<MatDataTransferTimelineRecord> m_TimelineRecords = new List<MatDataTransferTimelineRecord>();
+        private readonly List<MatDataTransferTimelineFrame> m_TimelineFrames =
+            new List<MatDataTransferTimelineFrame>();
         private readonly List<MatDataTransferTimelineRecord> m_FrameTimelineRecords = new List<MatDataTransferTimelineRecord>();
         private readonly List<ParamWriteResult> m_FrameReceipts = new List<ParamWriteResult>();
         private readonly MatDataTransferFileLogWriter m_FileWriter = new MatDataTransferFileLogWriter();
+        private static readonly MatDataTransferLogging s_Instance = new MatDataTransferLogging();
+        private MatDataTransferFeature m_Feature;
         private int m_TimelineVersion;
+        private int m_MaxTimelineFrames = DefaultMaxTimelineFramesValue;
+        private bool m_EnableLogging;
+        private bool m_AllowReleaseFileLogging;
+        private bool m_IsFrameOpen;
 
-        public bool EnableLogging;
-        public bool AllowReleaseFileLogging;
-
+        public static MatDataTransferLogging Instance => s_Instance;
         public IReadOnlyList<MatDataTransferTimelineRecord> TimelineRecords => m_TimelineRecords;
+        public IReadOnlyList<MatDataTransferTimelineFrame> TimelineFrames => m_TimelineFrames;
         public IReadOnlyList<ParamWriteResult> LastReceipts => m_FrameReceipts;
         public int TimelineVersion => m_TimelineVersion;
+        public int MaxTimelineFrames => m_MaxTimelineFrames;
         public string CurrentLogFilePath => m_FileWriter.FilePath;
+
+        private MatDataTransferLogging()
+        {
+        }
+
+        internal void BindFeature(MatDataTransferFeature feature)
+        {
+            if (feature != null)
+                m_Feature = feature;
+        }
+
+        internal void UnbindFeature(MatDataTransferFeature feature)
+        {
+            if (!ReferenceEquals(m_Feature, feature))
+                return;
+
+            m_Feature = null;
+            m_FileWriter.Close();
+        }
+
+        internal void ApplySettings(MatDataTransferLoggingSettings settings)
+        {
+            m_EnableLogging = settings != null && settings.EnableLogging;
+            m_AllowReleaseFileLogging = settings != null && settings.AllowReleaseFileLogging;
+            Configure(settings != null ? settings.MaxTimelineFrames : DefaultMaxTimelineFramesValue);
+        }
+
+        public void Configure(int maxTimelineFrames)
+        {
+            m_MaxTimelineFrames = Mathf.Max(1, maxTimelineFrames);
+            TrimTimelineFrames();
+        }
 
         public List<MatDataTransferTimelineRecord> GetTimelineList()
         {
@@ -31,29 +73,118 @@ namespace Rendering.MatDataTransfer.Runtime
 
         public List<ParamWriteResult> GetReceiptList() => m_FrameReceipts;
 
-        internal void TraceSubmit(
-            ref MaterialParameterSubmitPayload payload,
-            string stage,
-            ParamWriteResultType type,
-            ParamWriteResultCode code,
-            string message)
+        internal static void AppendSubmitStep(
+            ref ParamTransferPayload payload,
+            ParamSubmitStep step)
         {
-            if (payload.Result == null)
-                payload.Result = new MaterialParameterSubmitResult();
+            Instance.AppendSubmitStepInternal(ref payload, step);
+        }
 
-            payload.Result.AddTrace(stage, type, code, message);
-            WriteConsoleTrace(stage, type, code, message);
+        internal static void CaptureSubmitSnapshot(ref ParamTransferPayload payload)
+        {
+            Instance.CaptureSubmitSnapshotInternal(
+                ref payload,
+                default,
+                ParamWriteMethod.None,
+                string.Empty,
+                string.Empty);
+        }
+
+        internal static void CaptureWriteSnapshot(
+            ref ParamTransferPayload payload,
+            MaterialWriteCommand command,
+            ParamWriteMethod writeMethod)
+        {
+            Instance.CaptureSubmitSnapshotInternal(
+                ref payload,
+                command.BindingResolution,
+                writeMethod,
+                command.GameObjectPath,
+                BuildRendererPath(command.Renderer));
+        }
+
+        internal static void CaptureResolvedSnapshot(
+            ref ParamTransferPayload payload,
+            ResolvedMaterialBinding binding,
+            ParamSubmitStep step,
+            string gameObjectPath,
+            Renderer renderer)
+        {
+            Instance.CaptureResolvedSnapshotInternal(
+                ref payload,
+                binding,
+                step,
+                gameObjectPath,
+                BuildRendererPath(renderer));
+        }
+
+        private void AppendSubmitStepInternal(
+            ref ParamTransferPayload payload,
+            ParamSubmitStep step)
+        {
+            if (payload.Trace == null)
+                payload.Trace = new ParamSubmitTrace();
+
+            payload.Trace.AddStep(step);
+            WriteConsoleStep(step);
+        }
+
+        private void CaptureSubmitSnapshotInternal(
+            ref ParamTransferPayload payload,
+            ResolvedMaterialBinding binding,
+            ParamWriteMethod writeMethod,
+            string gameObjectPath,
+            string rendererPath)
+        {
+            if (payload.Trace == null)
+                payload.Trace = new ParamSubmitTrace();
+
+            bool ownsFrame = !m_IsFrameOpen;
+            if (ownsFrame)
+                BeginFrame();
+
+            RecordResult(
+                payload,
+                binding,
+                writeMethod,
+                payload.Trace,
+                ResolveGameObjectPath(payload, gameObjectPath),
+                rendererPath);
+
+            if (ownsFrame)
+                CompleteFrame();
+        }
+
+        private void CaptureResolvedSnapshotInternal(
+            ref ParamTransferPayload payload,
+            ResolvedMaterialBinding binding,
+            ParamSubmitStep step,
+            string gameObjectPath,
+            string rendererPath)
+        {
+            AppendSubmitStepInternal(
+                ref payload,
+                step);
+
+            CaptureSubmitSnapshotInternal(
+                ref payload,
+                binding,
+                ParamWriteMethod.None,
+                gameObjectPath,
+                rendererPath);
         }
 
         public void BeginFrame()
         {
             m_FrameReceipts.Clear();
             m_FrameTimelineRecords.Clear();
+            m_IsFrameOpen = true;
         }
 
         public void CompleteFrame()
         {
-            if (!EnableLogging)
+            m_IsFrameOpen = false;
+            if (!m_EnableLogging)
             {
                 ClearEditorTimelineRecords();
                 m_FileWriter.Close();
@@ -72,35 +203,6 @@ namespace Rendering.MatDataTransfer.Runtime
             m_FrameTimelineRecords.Clear();
         }
 
-        internal void RecordSubmitResult(
-            MaterialParameterSubmitPayload payload,
-            string gameObjectPath)
-        {
-            BeginFrame();
-            RecordResult(
-                payload,
-                default,
-                ParamWriteMethod.None,
-                payload.Result,
-                gameObjectPath,
-                string.Empty);
-            CompleteFrame();
-        }
-
-        internal void RecordWriteResult(
-            MaterialWriteCommand command,
-            ParamWriteMethod writeMethod,
-            MaterialParameterSubmitPayload payload)
-        {
-            RecordResult(
-                payload,
-                command.BindingResolution,
-                writeMethod,
-                payload.Result,
-                command.GameObjectPath,
-                BuildRendererPath(command.Renderer));
-        }
-
         public void Dispose()
         {
             m_FileWriter.Dispose();
@@ -113,7 +215,7 @@ namespace Rendering.MatDataTransfer.Runtime
 
         private bool IsTimelineCaptureEnabled()
         {
-            return EnableLogging
+            return m_EnableLogging
                 && (IsEditorTimelineEnabled() || IsFileTimelineAllowed());
         }
 
@@ -125,6 +227,7 @@ namespace Rendering.MatDataTransfer.Runtime
                 return;
             }
 
+            AppendEditorTimelineFrame();
             m_TimelineRecords.AddRange(m_FrameTimelineRecords);
             int overflow = m_TimelineRecords.Count - MaxEditorTimelineRecords;
             if (overflow > 0)
@@ -135,12 +238,44 @@ namespace Rendering.MatDataTransfer.Runtime
 
         private void ClearEditorTimelineRecords()
         {
-            if (m_TimelineRecords.Count == 0 && m_FrameTimelineRecords.Count == 0)
+            if (m_TimelineRecords.Count == 0
+                && m_TimelineFrames.Count == 0
+                && m_FrameTimelineRecords.Count == 0)
                 return;
 
             m_TimelineRecords.Clear();
+            m_TimelineFrames.Clear();
             m_FrameTimelineRecords.Clear();
             m_TimelineVersion++;
+        }
+
+        private void AppendEditorTimelineFrame()
+        {
+            int frameIndex = m_FrameTimelineRecords[0].FrameIndex;
+            double timeSinceStartup = m_FrameTimelineRecords[0].TimeSinceStartup;
+            if (m_TimelineFrames.Count > 0 && m_TimelineFrames[0].FrameIndex == frameIndex)
+            {
+                m_TimelineFrames[0].AddRecords(m_FrameTimelineRecords);
+            }
+            else
+            {
+                m_TimelineFrames.Insert(
+                    0,
+                    new MatDataTransferTimelineFrame(
+                        frameIndex,
+                        timeSinceStartup,
+                        m_FrameTimelineRecords));
+            }
+
+            TrimTimelineFrames();
+        }
+
+        private void TrimTimelineFrames()
+        {
+            int maxFrames = Mathf.Max(1, m_MaxTimelineFrames);
+            int overflow = m_TimelineFrames.Count - maxFrames;
+            if (overflow > 0)
+                m_TimelineFrames.RemoveRange(maxFrames, overflow);
         }
 
         private void WriteTimelineToFile()
@@ -165,7 +300,7 @@ namespace Rendering.MatDataTransfer.Runtime
             if (Debug.isDebugBuild)
                 return true;
 
-            return AllowReleaseFileLogging && MatDataTransferLogger.RuntimeFileOutputEnabled;
+            return m_AllowReleaseFileLogging && MatDataTransferLogger.RuntimeFileOutputEnabled;
 #endif
         }
 
@@ -179,65 +314,49 @@ namespace Rendering.MatDataTransfer.Runtime
         }
 
         private void RecordResult(
-            MaterialParameterSubmitPayload payload,
+            ParamTransferPayload payload,
             ResolvedMaterialBinding binding,
             ParamWriteMethod writeMethod,
-            MaterialParameterSubmitResult submitResult,
+            ParamSubmitTrace submitTrace,
             string gameObjectPath,
             string rendererPath)
         {
+            ParamSubmitStep currentStep = submitTrace != null ? submitTrace.Current : null;
             ParamWriteResult result = ParamWriteResult.FromPayload(
                 payload,
                 binding,
                 writeMethod,
-                submitResult.ResultInfo);
+                currentStep);
             m_FrameReceipts.Add(result);
 
             List<MatDataTransferTimelineRecord> timeline = GetTimelineList();
             if (timeline == null)
                 return;
 
-            string preview = payload.Value.ToPreview();
+            string preview = payload.Identity.Value.ToPreview();
             timeline.Add(new MatDataTransferTimelineRecord
             {
                 FrameIndex = MatDataTransferRuntime.FrameIndex,
                 TimeSinceStartup = MatDataTransferRuntime.TimeSinceStartup,
                 Sequence = payload.Sequence,
-                InstanceId = payload.InstanceId,
+                InstanceId = payload.Identity.Target != null ? payload.Identity.Target.InstanceId : -1,
                 GameObjectPath = gameObjectPath ?? string.Empty,
-                RendererBinding = payload.RendererBinding,
                 RendererPath = rendererPath ?? string.Empty,
                 Identity = payload.Identity,
+                ProviderName = payload.ProviderName,
                 Binding = binding,
                 WriteConfig = payload.WriteConfig,
                 WriteMethod = writeMethod,
-                ResultInfo = submitResult.ResultInfo,
-                Status = ToStatus(submitResult.ResultInfo),
+                Step = currentStep,
                 InspectorDisplayName = BuildDisplayName(payload, binding),
                 ValuePreview = preview,
+                SubmitLogSummary = BuildLogSummary(submitTrace),
                 ValueHash = MatDataTransferTimelineRecord.HashValuePreview(preview)
             });
         }
 
-        private static ParamWriteStatus ToStatus(ParamWriteResultInfo resultInfo)
-        {
-            switch (resultInfo.Type)
-            {
-                case ParamWriteResultType.Applied:
-                    return ParamWriteStatus.Applied;
-                case ParamWriteResultType.Overridden:
-                    return ParamWriteStatus.Overridden;
-                case ParamWriteResultType.WriterFailed:
-                    return ParamWriteStatus.WriterFailed;
-                case ParamWriteResultType.Rejected:
-                    return ParamWriteStatus.Rejected;
-                default:
-                    return ParamWriteStatus.Submitted;
-            }
-        }
-
         private static string BuildDisplayName(
-            MaterialParameterSubmitPayload payload,
+            ParamTransferPayload payload,
             ResolvedMaterialBinding binding)
         {
             string semanticKey = !string.IsNullOrEmpty(binding.MatchedSemanticKey)
@@ -248,6 +367,40 @@ namespace Rendering.MatDataTransfer.Runtime
                 : semanticKey;
         }
 
+        private static string BuildLogSummary(ParamSubmitTrace submitTrace)
+        {
+            if (submitTrace == null || submitTrace.Steps == null || submitTrace.Steps.Count == 0)
+                return string.Empty;
+
+            const int maxLogCount = 5;
+            System.Text.StringBuilder builder = new System.Text.StringBuilder();
+            int count = Mathf.Min(maxLogCount, submitTrace.Steps.Count);
+            for (int i = 0; i < count; i++)
+            {
+                if (i > 0)
+                    builder.Append(" > ");
+
+                builder.Append(submitTrace.Steps[i].Stage);
+            }
+
+            if (submitTrace.Steps.Count > maxLogCount)
+                builder.Append(" > ...");
+
+            return builder.ToString();
+        }
+
+        private static string ResolveGameObjectPath(
+            ParamTransferPayload payload,
+            string gameObjectPath)
+        {
+            if (!string.IsNullOrEmpty(gameObjectPath))
+                return gameObjectPath;
+
+            return payload.Identity.Target != null
+                ? MatDataTransferFeature.GetTransformPath(payload.Identity.Target.transform)
+                : string.Empty;
+        }
+
         private static string BuildRendererPath(Renderer renderer)
         {
             return renderer != null
@@ -255,16 +408,16 @@ namespace Rendering.MatDataTransfer.Runtime
                 : string.Empty;
         }
 
-        private static void WriteConsoleTrace(
-            string stage,
-            ParamWriteResultType type,
-            ParamWriteResultCode code,
-            string message)
+        private static void WriteConsoleStep(ParamSubmitStep step)
         {
-            if (type == ParamWriteResultType.Rejected || type == ParamWriteResultType.WriterFailed)
+            if (step == null)
+                return;
+
+            if (step.Status == ParamWriteStatus.Rejected
+                || step.Status == ParamWriteStatus.WriterFailed)
             {
                 MatDataTransferLogger.LogWarning(
-                    stage + " " + code + ": " + message);
+                    step.Stage + " " + step.Code + ": " + step.Message);
             }
         }
     }

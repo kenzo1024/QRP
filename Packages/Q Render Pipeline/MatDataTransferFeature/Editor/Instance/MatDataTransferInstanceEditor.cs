@@ -22,12 +22,11 @@ namespace Rendering.MatDataTransfer.Editor
         private const float BindingIdValueWidth = 74f;
         private const float BindingSlotTitleWidth = 48f;
         private const float BindingSlotValueWidth = 32f;
-        private const float KeyTypeWidth = 70f;
-        private const float KeyStatusWidth = 70f;
-        private const float KeyPropertyWidth = 130f;
+        private const float MainKeyPropertyColumnRatio = 1f / 3f;
+        private const float MetaKeyPropertyColumnRatio = 1f / 6f;
 
         private static bool s_ShowInstanceInfo = true;
-        private static bool s_ShowBindings = true;
+        private static bool s_ShowBindings;
         private static bool s_ShowCatalogKeys = true;
         private static bool s_ShowDebugInfo = true;
         private static readonly Dictionary<string, bool> s_ShaderBindingFoldouts =
@@ -90,8 +89,14 @@ namespace Rendering.MatDataTransfer.Editor
                 {
                     Dictionary<string, List<RendererMaterialBinding>> grouped = GetBindingsByShaderSafe(instance);
                     List<string> shaderNames = GetSortedShaderNames(grouped);
-                    for (int i = 0; i < shaderNames.Count; i++)
-                        DrawShaderGroup(shaderNames[i], grouped[shaderNames[i]]);
+                    using (InspectorStyleLibrary.BeginAlternatingListLayout())
+                    {
+                        for (int i = 0; i < shaderNames.Count; i++)
+                        {
+                            using (InspectorStyleLibrary.BeginAlternatingListItemLayout(i))
+                                DrawShaderGroup(shaderNames[i], grouped[shaderNames[i]]);
+                        }
+                    }
                 }
 
                 EditorGUILayout.Space(4);
@@ -152,8 +157,14 @@ namespace Rendering.MatDataTransfer.Editor
                 }
 
                 List<string> shaderNames = GetSortedShaderNames(grouped);
-                for (int i = 0; i < shaderNames.Count; i++)
-                    DrawShaderCatalogKeys(feature, shaderNames[i], grouped[shaderNames[i]].Count);
+                using (InspectorStyleLibrary.BeginAlternatingListLayout())
+                {
+                    for (int i = 0; i < shaderNames.Count; i++)
+                    {
+                        using (InspectorStyleLibrary.BeginAlternatingListItemLayout(i))
+                            DrawShaderCatalogKeys(feature, shaderNames[i], grouped[shaderNames[i]].Count);
+                    }
+                }
             }
         }
 
@@ -307,26 +318,16 @@ namespace Rendering.MatDataTransfer.Editor
             out Rect typeRect,
             out Rect statusRect)
         {
-            statusRect = new Rect(
-                rect.xMax - KeyStatusWidth,
-                rect.y,
-                KeyStatusWidth,
-                rect.height);
-            typeRect = new Rect(
-                statusRect.x - RowGap - KeyTypeWidth,
-                rect.y,
-                KeyTypeWidth,
-                rect.height);
-            propertyRect = new Rect(
-                typeRect.x - RowGap - KeyPropertyWidth,
-                rect.y,
-                KeyPropertyWidth,
-                rect.height);
-            keyRect = new Rect(
-                rect.x,
-                rect.y,
-                Mathf.Max(0f, propertyRect.x - RowGap - rect.x),
-                rect.height);
+            float contentWidth = Mathf.Max(0f, rect.width - RowGap * 3f);
+            float keyWidth = contentWidth * MainKeyPropertyColumnRatio;
+            float propertyWidth = contentWidth * MainKeyPropertyColumnRatio;
+            float typeWidth = contentWidth * MetaKeyPropertyColumnRatio;
+            float statusWidth = Mathf.Max(0f, contentWidth - keyWidth - propertyWidth - typeWidth);
+
+            keyRect = new Rect(rect.x, rect.y, keyWidth, rect.height);
+            propertyRect = new Rect(keyRect.xMax + RowGap, rect.y, propertyWidth, rect.height);
+            typeRect = new Rect(propertyRect.xMax + RowGap, rect.y, typeWidth, rect.height);
+            statusRect = new Rect(typeRect.xMax + RowGap, rect.y, statusWidth, rect.height);
         }
 
         private static float GetCatalogPropertyPanelLeftPadding()
@@ -356,7 +357,7 @@ namespace Rendering.MatDataTransfer.Editor
 
         private bool DrawShaderGroupHeader(string shaderName, int rendererCount, int slotCount)
         {
-            bool expanded = GetFoldoutState(s_ShaderBindingFoldouts, shaderName, true);
+            bool expanded = GetFoldoutState(s_ShaderBindingFoldouts, shaderName, false);
             expanded = InspectorStyleLibrary.DrawFoldoutLayout(
                 expanded,
                 shaderName,

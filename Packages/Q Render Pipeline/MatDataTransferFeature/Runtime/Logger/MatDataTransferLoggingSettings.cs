@@ -7,5 +7,6 @@ namespace Rendering.MatDataTransfer.Runtime
     {
         public bool EnableLogging;
         public bool AllowReleaseFileLogging;
+        public int MaxTimelineFrames = MatDataTransferLogging.DefaultMaxTimelineFramesValue;
     }
 }

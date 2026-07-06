@@ -5,15 +5,7 @@ namespace Rendering.MatDataTransfer.Runtime
     public enum ParamWriteStatus
     {
         Submitted,
-        Applied,
-        Overridden,
-        Rejected,
-        WriterFailed
-    }
-
-    public enum ParamWriteResultType
-    {
-        Accepted,
+        Queued,
         Applied,
         Overridden,
         Rejected,
@@ -39,94 +31,25 @@ namespace Rendering.MatDataTransfer.Runtime
     }
 
     [Serializable]
-    public struct ParamWriteResultInfo
-    {
-        public bool Accepted;
-        public bool Applied;
-        public ParamWriteResultType Type;
-        public ParamWriteResultCode Code;
-        public string OverriddenBySourceId;
-        public string Message;
-
-        public static ParamWriteResultInfo Rejected(ParamWriteResultCode code, string message, string overriddenBy = null)
-        {
-            return new ParamWriteResultInfo
-            {
-                Accepted = false,
-                Applied = false,
-                Type = ParamWriteResultType.Rejected,
-                Code = code,
-                OverriddenBySourceId = overriddenBy,
-                Message = message
-            };
-        }
-
-        public static ParamWriteResultInfo Accept(ParamWriteResultCode code = ParamWriteResultCode.None, string message = null)
-        {
-            return new ParamWriteResultInfo
-            {
-                Accepted = true,
-                Applied = false,
-                Type = ParamWriteResultType.Accepted,
-                Code = code,
-                Message = message ?? string.Empty
-            };
-        }
-
-        public static ParamWriteResultInfo CreateApplied()
-        {
-            return new ParamWriteResultInfo
-            {
-                Accepted = true,
-                Applied = true,
-                Type = ParamWriteResultType.Applied,
-                Code = ParamWriteResultCode.None
-            };
-        }
-
-        public static ParamWriteResultInfo WriterFailed()
-        {
-            return new ParamWriteResultInfo
-            {
-                Accepted = true,
-                Applied = false,
-                Type = ParamWriteResultType.WriterFailed,
-                Code = ParamWriteResultCode.WriterFailed,
-                Message = "WriterFailed"
-            };
-        }
-
-        public static ParamWriteResultInfo Overridden(string overriddenBy)
-        {
-            return new ParamWriteResultInfo
-            {
-                Accepted = true,
-                Applied = false,
-                Type = ParamWriteResultType.Overridden,
-                Code = ParamWriteResultCode.OverriddenByStrongerRequest,
-                OverriddenBySourceId = overriddenBy,
-                Message = ParamWriteResultCode.OverriddenByStrongerRequest.ToString()
-            };
-        }
-    }
-
-    [Serializable]
     public struct ParamWriteResult
     {
         public ParamRequestIdentity Identity;
         public ResolvedMaterialBinding Binding;
         public ParamWriteConfig WriteConfig;
         public ParamWriteMethod WriteMethod;
-        public ParamWriteResultInfo ResultInfo;
+        public ParamSubmitStep Step;
 
-        public bool Accepted => ResultInfo.Accepted;
-        public bool Applied  => ResultInfo.Applied;
+        public bool IsAccepted => Step != null && Step.IsAccepted;
+        public bool IsApplied => Step != null && Step.IsApplied;
+        public ParamWriteStatus Status => Step != null ? Step.Status : ParamWriteStatus.Submitted;
+        public ParamWriteResultCode Code => Step != null ? Step.Code : ParamWriteResultCode.None;
+        public string Message => Step != null ? Step.Message : string.Empty;
 
         internal static ParamWriteResult FromPayload(
-            MaterialParameterSubmitPayload payload,
+            ParamTransferPayload payload,
             ResolvedMaterialBinding binding,
             ParamWriteMethod writeMethod,
-            ParamWriteResultInfo resultInfo)
+            ParamSubmitStep step)
         {
             return new ParamWriteResult
             {
@@ -134,7 +57,7 @@ namespace Rendering.MatDataTransfer.Runtime
                 Binding = binding,
                 WriteConfig = payload.WriteConfig,
                 WriteMethod = writeMethod,
-                ResultInfo = resultInfo
+                Step = step
             };
         }
     }

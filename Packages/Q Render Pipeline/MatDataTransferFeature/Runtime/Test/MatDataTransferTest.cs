@@ -10,12 +10,6 @@ namespace Rendering.MatDataTransfer.Runtime
     {
         private const string SourceLabel = nameof(MatDataTransferTest);
 
-        private enum TestValueKind
-        {
-            Color,
-            Float
-        }
-
         [Header("Target")]
         [SerializeField] private MatDataTransferInstance targetInstance;
         [SerializeField] private Renderer targetRenderer;
@@ -25,9 +19,7 @@ namespace Rendering.MatDataTransfer.Runtime
         [Header("Submit")]
         [SerializeField] private string semanticKey;
         [SerializeField] private int priority;
-        [SerializeField] private TestValueKind valueKind = TestValueKind.Color;
-        [SerializeField] private Color testColor = Color.white;
-        [SerializeField] private float testFloat = 1.0f;
+        [SerializeField] private ParamValue testValue = ParamValue.Color(Color.white);
 
         [Header("Status")]
         [SerializeField] private bool lastSubmitSuccess;
@@ -42,26 +34,19 @@ namespace Rendering.MatDataTransfer.Runtime
 
         private void SubmitTestParameters()
         {
-            MaterialParameterSubmitResult result = MatDataTransferAPI.ForMaterial(
+            ParamSubmitTrace result = MatDataTransferAPI.ForMaterial(
                 targetInstance,
                 semanticKey,
-                BuildTestValue(),
+                testValue,
                 targetRenderer,
                 materialSlot,
                 MatDataTransferSubmitSource.From(this, SourceLabel),
                 ParamWriteLayer.Gameplay,
                 priority);
 
-            lastSubmitSuccess = result.Accepted;
+            lastSubmitSuccess = result.IsAccepted;
             statusMessage = result.ToString();
             UpdateResolvedTargetMessage();
-        }
-
-        private ParamValue BuildTestValue()
-        {
-            return valueKind == TestValueKind.Float
-                ? ParamValue.Float(testFloat)
-                : ParamValue.Color(testColor);
         }
 
         private void UpdateResolvedTargetMessage()
@@ -81,8 +66,7 @@ namespace Rendering.MatDataTransfer.Runtime
             if (targetInstance == null || targetRenderer == null || materialSlot < 0)
                 return null;
 
-            var bindings = targetInstance.QueryBindings(targetRenderer.GetInstanceID(), materialSlot);
-            return bindings != null && bindings.Count > 0 ? bindings[0] : null;
+            return targetInstance.QueryBinding(targetRenderer, materialSlot);
         }
 
         private void Reset()

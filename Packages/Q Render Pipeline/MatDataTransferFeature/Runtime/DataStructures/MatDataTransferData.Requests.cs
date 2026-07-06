@@ -6,15 +6,26 @@ namespace Rendering.MatDataTransfer.Runtime
     [Serializable]
     public struct ParamRequestIdentity
     {
-        public string SourceId;
-        public string ProviderName;
+        [NonSerialized] public MatDataTransferInstance Target;
+        public MatDataTransferSubmitSource Source;
         public string SemanticKey;
+        public ParamValue Value;
+        public ParamRendererBinding Binding;
 
-        public ParamRequestIdentity(string sourceId, string providerName, string semanticKey)
+        public string SourceId => Source.Id;
+
+        public ParamRequestIdentity(
+            MatDataTransferInstance target,
+            MatDataTransferSubmitSource source,
+            string semanticKey,
+            ParamValue value,
+            RendererMaterialBinding binding)
         {
-            SourceId = sourceId;
-            ProviderName = providerName;
+            Target = target;
+            Source = source;
             SemanticKey = semanticKey;
+            Value = value;
+            Binding = new ParamRendererBinding(binding);
         }
     }
 
@@ -79,14 +90,14 @@ namespace Rendering.MatDataTransfer.Runtime
 
     internal readonly struct MaterialWriteCommand
     {
-        public readonly MaterialParameterSubmitPayload Payload;
+        public readonly ParamTransferPayload Payload;
         public readonly CatalogProperty Property;
         public readonly ResolvedMaterialBinding BindingResolution;
         public readonly Renderer Renderer;
         public readonly string GameObjectPath;
 
         public MaterialWriteCommand(
-            MaterialParameterSubmitPayload payload,
+            ParamTransferPayload payload,
             CatalogProperty property,
             ResolvedMaterialBinding bindingResolution,
             Renderer renderer,

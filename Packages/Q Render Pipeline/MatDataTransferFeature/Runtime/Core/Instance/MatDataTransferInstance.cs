@@ -185,59 +185,51 @@ namespace Rendering.MatDataTransfer.Runtime
             }
         }
 
-        public List<RendererMaterialBinding> QueryBindings(int rendererId = 0, int materialSlot = -1, string shaderName = null)
+        public RendererMaterialBinding QueryBinding(Renderer renderer, int materialSlot, string shaderName = null)
         {
-            List<RendererMaterialBinding> results = new List<RendererMaterialBinding>();
-
-            foreach (var binding in bindings)
-            {
-                if (binding == null)
-                    continue;
-
-                if (rendererId != 0 && binding.RendererId != rendererId)
-                    continue;
-
-                if (materialSlot >= 0 && binding.MaterialSlot != materialSlot)
-                    continue;
-
-                if (!string.IsNullOrEmpty(shaderName) &&
-                    !string.Equals(binding.ShaderName, shaderName, System.StringComparison.Ordinal))
-                    continue;
-
-                results.Add(binding);
-            }
-
-            return results;
+            return QueryBinding(new ParamRendererBinding(renderer, materialSlot), shaderName);
         }
 
-        public List<RendererMaterialBinding> QueryBindingsByTrace(
-            string rendererPathId,
-            int materialSlot = -1,
-            string shaderName = null)
+        public RendererMaterialBinding QueryBinding(ParamRendererBinding target, string shaderName = null)
         {
-            List<RendererMaterialBinding> results = new List<RendererMaterialBinding>();
-            if (string.IsNullOrEmpty(rendererPathId))
-                return results;
+            if (!IsValidBindingTarget(target))
+                return null;
 
             foreach (var binding in bindings)
             {
-                if (binding == null)
-                    continue;
-
-                if (!string.Equals(binding.RendererPathId, rendererPathId, System.StringComparison.Ordinal))
-                    continue;
-
-                if (materialSlot >= 0 && binding.MaterialSlot != materialSlot)
-                    continue;
-
-                if (!string.IsNullOrEmpty(shaderName) &&
-                    !string.Equals(binding.ShaderName, shaderName, System.StringComparison.Ordinal))
-                    continue;
-
-                results.Add(binding);
+                if (IsBindingMatch(binding, target, shaderName))
+                    return binding;
             }
 
-            return results;
+            return null;
+        }
+
+        private static bool IsValidBindingTarget(ParamRendererBinding target)
+        {
+            return target.MaterialSlot >= 0 && (target.Renderer != null || target.RendererId != 0);
+        }
+
+        private static bool IsBindingMatch(RendererMaterialBinding binding, ParamRendererBinding target, string shaderName)
+        {
+            if (binding == null)
+                return false;
+
+            if (binding.MaterialSlot != target.MaterialSlot)
+                return false;
+
+            if (!IsSameRenderer(binding, target))
+                return false;
+
+            return string.IsNullOrEmpty(shaderName)
+                || string.Equals(binding.ShaderName, shaderName, System.StringComparison.Ordinal);
+        }
+
+        private static bool IsSameRenderer(RendererMaterialBinding binding, ParamRendererBinding target)
+        {
+            if (target.Renderer != null)
+                return binding.Renderer == target.Renderer;
+
+            return target.RendererId != 0 && binding.RendererId == target.RendererId;
         }
 
         public Dictionary<string, List<RendererMaterialBinding>> GetBindingsByShader()

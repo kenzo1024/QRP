@@ -5,8 +5,8 @@ namespace Rendering.MatDataTransfer.Runtime
 {
     public partial class MatDataTransferFeature
     {
-        private readonly List<MaterialParameterSubmitPayload> m_FramePayloads =
-            new List<MaterialParameterSubmitPayload>();
+        private readonly List<ParamTransferPayload> m_FramePayloads =
+            new List<ParamTransferPayload>();
 
         private MaterialWriteContext m_WriteContext;
         private MatDataTransferResolver m_Resolver;
@@ -18,9 +18,9 @@ namespace Rendering.MatDataTransfer.Runtime
             GenericMaterialParameterProvider.ClearAllRequests();
         }
 
-        private static void ClearRequestsForInstanceId(int instanceId)
+        private static void ClearRequestsForInstance(MatDataTransferInstance instance)
         {
-            GenericMaterialParameterProvider.TryClearQueuedRequests(instanceId);
+            GenericMaterialParameterProvider.TryClearQueuedRequests(instance);
         }
 
         private void InitializeRequestPipeline()
@@ -37,7 +37,7 @@ namespace Rendering.MatDataTransfer.Runtime
             if (!IsPrimaryInstance())
                 return;
 
-            m_Logging.BeginFrame();
+            Logging.BeginFrame();
             try
             {
                 if (HandleGenericProviderState(out bool shouldClearWrittenState))
@@ -67,7 +67,8 @@ namespace Rendering.MatDataTransfer.Runtime
             }
             finally
             {
-                m_Logging.CompleteFrame();
+                Logging.CompleteFrame();
+                MaterialParameterSubmitter.ResetSubmitSequence();
             }
         }
 

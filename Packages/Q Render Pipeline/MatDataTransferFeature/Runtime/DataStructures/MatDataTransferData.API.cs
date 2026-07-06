@@ -5,59 +5,31 @@ using UnityEngine;
 
 namespace Rendering.MatDataTransfer.Runtime
 {
-    internal struct MaterialParameterSubmitPayload
+    internal struct ParamTransferPayload
     {
-        public MatDataTransferInstance Target;
-        public string SemanticKey;
-        public ParamValue Value;
-        public MatDataTransferSubmitSource Source;
-        public RendererMaterialBinding Binding;
-        public ParamWriteLayer Layer;
-        public int Priority;
         public ParamRequestIdentity Identity;
-        public ParamRendererBinding RendererBinding;
         public ParamWriteConfig WriteConfig;
-        public int InstanceId;
+        public string ProviderName;
         public int Sequence;
-        public MaterialParameterSubmitResult Result;
+        public ParamSubmitTrace Trace;
 
-        public MaterialParameterSubmitPayload(
-            MatDataTransferInstance target,
-            string semanticKey,
-            ParamValue value,
-            MatDataTransferSubmitSource source,
-            RendererMaterialBinding binding,
-            ParamWriteLayer layer,
-            int priority)
+        public ParamTransferPayload(
+            ParamRequestIdentity identity,
+            ParamWriteConfig writeConfig)
         {
-            Target = target;
-            SemanticKey = semanticKey;
-            Value = value;
-            Source = source;
-            Binding = binding;
-            Layer = layer;
-            Priority = priority;
-            Identity = new ParamRequestIdentity(source.Id, null, semanticKey);
-            RendererBinding = new ParamRendererBinding(binding);
-            WriteConfig = new ParamWriteConfig(layer, priority);
-            InstanceId = target != null ? target.InstanceId : -1;
+            Identity = identity;
+            WriteConfig = writeConfig;
+            ProviderName = string.Empty;
             Sequence = 0;
-            Result = new MaterialParameterSubmitResult();
-        }
-
-        internal void RefreshRouting()
-        {
-            Identity = new ParamRequestIdentity(Source.Id, Identity.ProviderName, SemanticKey);
-            RendererBinding = new ParamRendererBinding(Binding);
-            WriteConfig = new ParamWriteConfig(Layer, Priority);
-            InstanceId = Target != null ? Target.InstanceId : -1;
+            Trace = new ParamSubmitTrace();
         }
     }
 
+    [Serializable]
     public struct MatDataTransferSubmitSource
     {
         public string Id;
-        public UnityEngine.Object Owner;
+        [NonSerialized] public UnityEngine.Object Owner;
 
         public static MatDataTransferSubmitSource From(UnityEngine.Object owner, string label = null)
         {
@@ -77,7 +49,7 @@ namespace Rendering.MatDataTransfer.Runtime
             string ownerType = owner.GetType().Name;
             string ownerPath = owner.name;
             if (owner is Component component)
-                ownerPath = BuildTransformPath(component.transform);
+                ownerPath = BuildComponentPath(component);
             else if (owner is GameObject gameObject)
                 ownerPath = BuildTransformPath(gameObject.transform);
 
@@ -102,6 +74,31 @@ namespace Rendering.MatDataTransfer.Runtime
             }
 
             return builder.ToString();
+        }
+
+        private static string BuildComponentPath(Component component)
+        {
+            if (component == null)
+                return string.Empty;
+
+            return BuildTransformPath(component.transform)
+                + "."
+                + component.GetType().Name
+                + "["
+                + GetSameTypeComponentIndex(component)
+                + "]";
+        }
+
+        private static int GetSameTypeComponentIndex(Component component)
+        {
+            Component[] components = component.GetComponents(component.GetType());
+            for (int i = 0; i < components.Length; i++)
+            {
+                if (ReferenceEquals(components[i], component))
+                    return i;
+            }
+
+            return 0;
         }
 
         private static string BuildTransformSegment(Transform transform)
@@ -139,60 +136,108 @@ namespace Rendering.MatDataTransfer.Runtime
     }
 
     [Serializable]
-    public sealed class MaterialParameterSubmitTrace
+    public sealed class ParamSubmitStep
     {
         public string Stage;
-        public ParamWriteResultType Type;
+        public ParamWriteStatus Status;
         public ParamWriteResultCode Code;
+        public string OverriddenBySourceId;
         public string Message;
 
-        public MaterialParameterSubmitTrace(
+        public bool IsAccepted => Status != ParamWriteStatus.Rejected;
+        public bool IsApplied => Status == ParamWriteStatus.Applied;
+
+        public ParamSubmitStep()
+        {
+            Stage = string.Empty;
+            Status = ParamWriteStatus.Submitted;
+            Code = ParamWriteResultCode.None;
+            OverriddenBySourceId = string.Empty;
+            Message = string.Empty;
+        }
+
+        public ParamSubmitStep(
             string stage,
-            ParamWriteResultType type,
+            ParamWriteStatus status,
+            ParamWriteResultCode code,
+            string message,
+            string overriddenBySourceId = null)
+        {
+            Stage = stage;
+            Status = status;
+            Code = code;
+            Message = message ?? string.Empty;
+            OverriddenBySourceId = overriddenBySourceId;
+        }
+
+        public static ParamSubmitStep Submitted(string stage, string message = null)
+        {
+            return new ParamSubmitStep(stage, ParamWriteStatus.Submitted, ParamWriteResultCode.None, message);
+        }
+
+        public static ParamSubmitStep Queued(string stage, string message = null)
+        {
+            return new ParamSubmitStep(stage, ParamWriteStatus.Queued, ParamWriteResultCode.None, message);
+        }
+
+        public static ParamSubmitStep Applied(string stage, string message = null)
+        {
+            return new ParamSubmitStep(stage, ParamWriteStatus.Applied, ParamWriteResultCode.None, message);
+        }
+
+        public static ParamSubmitStep Rejected(
+            string stage,
             ParamWriteResultCode code,
             string message)
         {
-            Stage = stage;
-            Type = type;
-            Code = code;
-            Message = message;
+            return new ParamSubmitStep(stage, ParamWriteStatus.Rejected, code, message);
+        }
+
+        public static ParamSubmitStep Overridden(string stage, string overriddenBySourceId)
+        {
+            return new ParamSubmitStep(
+                stage,
+                ParamWriteStatus.Overridden,
+                ParamWriteResultCode.OverriddenByStrongerRequest,
+                ParamWriteResultCode.OverriddenByStrongerRequest.ToString(),
+                overriddenBySourceId);
+        }
+
+        public static ParamSubmitStep WriterFailed(string stage, string message = null)
+        {
+            return new ParamSubmitStep(
+                stage,
+                ParamWriteStatus.WriterFailed,
+                ParamWriteResultCode.WriterFailed,
+                string.IsNullOrEmpty(message) ? "WriterFailed" : message);
         }
     }
 
     [Serializable]
-    public sealed class MaterialParameterSubmitResult
+    public sealed class ParamSubmitTrace
     {
-        public bool Accepted;
-        public string Message;
-        public ParamWriteResultInfo ResultInfo;
-        public readonly List<MaterialParameterSubmitTrace> Traces =
-            new List<MaterialParameterSubmitTrace>();
+        public readonly List<ParamSubmitStep> Steps =
+            new List<ParamSubmitStep>();
 
-        public void AddTrace(
-            string stage,
-            ParamWriteResultType type,
-            ParamWriteResultCode code,
-            string message)
+        public ParamSubmitStep Current => Steps.Count > 0 ? Steps[Steps.Count - 1] : null;
+        public bool IsAccepted => Current != null && Current.IsAccepted;
+        public bool IsApplied => Current != null && Current.IsApplied;
+        public ParamWriteStatus Status => Current != null ? Current.Status : ParamWriteStatus.Submitted;
+        public ParamWriteResultCode Code => Current != null ? Current.Code : ParamWriteResultCode.None;
+        public string Message => Current != null ? Current.Message : string.Empty;
+
+        public void AddStep(ParamSubmitStep step)
         {
-            Traces.Add(new MaterialParameterSubmitTrace(stage, type, code, message));
-            Message = message;
-            ResultInfo = new ParamWriteResultInfo
-            {
-                Accepted = type != ParamWriteResultType.Rejected,
-                Applied = type == ParamWriteResultType.Applied,
-                Type = type,
-                Code = code,
-                Message = message
-            };
-            Accepted = ResultInfo.Accepted;
+            if (step != null)
+                Steps.Add(step);
         }
 
         public override string ToString()
         {
-            if (Accepted)
+            if (IsAccepted)
                 return string.IsNullOrEmpty(Message) ? "Submit accepted." : Message;
 
-            return $"{ResultInfo.Code}: {Message}";
+            return $"{Code}: {Message}";
         }
     }
 }

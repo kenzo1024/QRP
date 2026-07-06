@@ -4,10 +4,9 @@ namespace Rendering.MatDataTransfer.Runtime
     internal sealed class MaterialWriteContext
     {
         private readonly MatDataTransferFeature m_Feature;
-        private readonly List<MaterialParameterSubmitPayload> m_Payloads;
-        private int m_Sequence;
+        private readonly List<ParamTransferPayload> m_Payloads;
 
-        internal MaterialWriteContext(MatDataTransferFeature feature, List<MaterialParameterSubmitPayload> payloads)
+        internal MaterialWriteContext(MatDataTransferFeature feature, List<ParamTransferPayload> payloads)
         {
             m_Feature = feature;
             m_Payloads = payloads;
@@ -18,12 +17,10 @@ namespace Rendering.MatDataTransfer.Runtime
         internal void BeginFrame()
         {
             m_Payloads.Clear();
-            m_Sequence = 0;
         }
 
-        internal void Submit(MaterialParameterSubmitPayload payload)
+        internal void Submit(ParamTransferPayload payload)
         {
-            payload.Sequence = ++m_Sequence;
             m_Payloads.Add(payload);
         }
     }

@@ -12,15 +12,15 @@ namespace Rendering.MatDataTransfer.Runtime
 
     internal sealed class GenericMaterialParameterProvider : IMatDataTransferRequestProvider
     {
-        internal const string ProviderName = MatDataTransferAPI.GenericProviderName;
+        internal const string ProviderName = MatDataTransferProviderNames.GenericMaterialParameter;
 
-        private static readonly List<MaterialParameterSubmitPayload> s_Requests =
-            new List<MaterialParameterSubmitPayload>();
+        private static readonly List<ParamTransferPayload> s_Requests =
+            new List<ParamTransferPayload>();
         internal GenericMaterialParameterProvider() { }
 
         public string Name => ProviderName;
 
-        internal static bool TryQueue(MaterialParameterSubmitPayload payload)
+        internal static bool TryQueue(ref ParamTransferPayload payload)
         {
             MatDataTransferFeature feature = MatDataTransferFeature.Instance;
             if (feature == null
@@ -28,24 +28,35 @@ namespace Rendering.MatDataTransfer.Runtime
                 || feature.GetRequestProvider(ProviderName) == null)
             {
                 ClearAllRequests();
+                MatDataTransferLogging.AppendSubmitStep(
+                    ref payload,
+                    ParamSubmitStep.Rejected(
+                        "Submit.Queue",
+                        ParamWriteResultCode.ProviderUnavailable,
+                        "Generic material parameter provider rejected the request."));
                 return false;
             }
 
-            payload.Identity.ProviderName = ProviderName;
+            payload.ProviderName = ProviderName;
+            MatDataTransferLogging.AppendSubmitStep(
+                ref payload,
+                ParamSubmitStep.Queued(
+                    "Submit.Queue",
+                    "Submit accepted."));
             s_Requests.Add(payload);
 
             return true;
         }
 
-        internal static bool TryClearQueuedRequests(int instanceId)
+        internal static bool TryClearQueuedRequests(MatDataTransferInstance instance)
         {
-            if (!IsProviderEnabled())
+            if (!IsProviderEnabled() || instance == null)
                 return false;
 
             bool removed = false;
             for (int i = s_Requests.Count - 1; i >= 0; i--)
             {
-                if (s_Requests[i].InstanceId != instanceId)
+                if (!ReferenceEquals(s_Requests[i].Identity.Target, instance))
                     continue;
 
                 s_Requests.RemoveAt(i);

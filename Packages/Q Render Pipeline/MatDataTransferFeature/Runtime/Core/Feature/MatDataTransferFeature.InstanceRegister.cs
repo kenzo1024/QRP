@@ -122,8 +122,8 @@ namespace Rendering.MatDataTransfer.Runtime
             if (m_LiveInstances.Contains(instance))
                 return;
 
-            if (m_InstanceRegister.Release(instance, out int releasedId))
-                ClearRequestsForInstanceId(releasedId);
+            if (m_InstanceRegister.Release(instance, out _))
+                ClearRequestsForInstance(instance);
         }
 
         private void RegisterLiveInstances()

@@ -212,7 +212,7 @@ namespace Rendering.MatDataTransfer.Editor
             if (m_GenericProviderSettings == null)
                 return;
 
-            InspectorStyleLibrary.DrawTitle(MatDataTransferAPI.GenericProviderName);
+            InspectorStyleLibrary.DrawTitle(MatDataTransferProviderNames.GenericMaterialParameter);
             InspectorStyleLibrary.DrawCopyableTailLabelLayout(
                 "Type: Built-in Generic Material Parameter Provider",
                 InspectorStyleLibrary.Description,
@@ -245,10 +245,22 @@ namespace Rendering.MatDataTransfer.Editor
             bool enabled = enableLogging != null && enableLogging.boolValue;
             using (new EditorGUI.DisabledScope(!enabled))
             {
+                DrawMaxTimelineFramesProperty();
                 DrawLoggingProperty("AllowReleaseFileLogging", "Allow Release Player File Logging");
             }
 
             DrawTimelineViewerButton();
+        }
+
+        private void DrawMaxTimelineFramesProperty()
+        {
+            SerializedProperty property = m_LoggingSettings.FindPropertyRelative("MaxTimelineFrames");
+            if (property == null)
+                return;
+
+            property.intValue = Mathf.Max(
+                1,
+                EditorGUILayout.IntField("Max Recorded Frames", property.intValue));
         }
 
         private SerializedProperty DrawLoggingProperty(string propertyName, string label)
@@ -269,10 +281,7 @@ namespace Rendering.MatDataTransfer.Editor
                     MatDataTransferTimelineViewer.OpenWindow();
             }
 
-            MatDataTransferFeature feature = target as MatDataTransferFeature;
-            MatDataTransferLogging logging = feature != null
-                ? feature.Logging as MatDataTransferLogging
-                : null;
+            MatDataTransferLogging logging = MatDataTransferLogging.Instance;
             if (logging != null && !string.IsNullOrEmpty(logging.CurrentLogFilePath))
                 InspectorStyleLibrary.DrawCopyableTailLabelLayout(
                     logging.CurrentLogFilePath,

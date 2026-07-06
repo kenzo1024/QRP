@@ -19,17 +19,18 @@ namespace Rendering.MatDataTransfer.Runtime
             {
                 MaterialWriteCommand command = commands[i];
                 ParamWriteMethod writeMethod = ApplyWriteCommand(command);
-                ParamWriteResultInfo resultInfo = writeMethod == ParamWriteMethod.None
-                    ? ParamWriteResultInfo.WriterFailed()
-                    : ParamWriteResultInfo.CreateApplied();
-                MaterialParameterSubmitPayload payload = command.Payload;
-                TraceSubmit(
+                ParamSubmitStep step = writeMethod == ParamWriteMethod.None
+                    ? ParamSubmitStep.WriterFailed("Write.Apply")
+                    : ParamSubmitStep.Applied("Write.Apply", "Write applied.");
+
+                ParamTransferPayload payload = command.Payload;
+                MatDataTransferLogging.AppendSubmitStep(
                     ref payload,
-                    "Write.Apply",
-                    resultInfo.Type,
-                    resultInfo.Code,
-                    string.IsNullOrEmpty(resultInfo.Message) ? "Write applied." : resultInfo.Message);
-                m_Logging.RecordWriteResult(command, writeMethod, payload);
+                    step);
+                MatDataTransferLogging.CaptureWriteSnapshot(
+                    ref payload,
+                    command,
+                    writeMethod);
             }
 
             FlushPropertyBlocks();
@@ -66,7 +67,7 @@ namespace Rendering.MatDataTransfer.Runtime
         private void QueuePropertyBlock(MaterialWriteCommand command)
         {
             int rendererId = command.Renderer.GetInstanceID();
-            int materialSlot = command.Payload.RendererBinding.MaterialSlot;
+            int materialSlot = command.Payload.Identity.Binding.MaterialSlot;
             long key = PropertyBlockEntry.GetLookupKey(rendererId, materialSlot);
             if (!m_PropertyBlockEntries.TryGetValue(key, out PropertyBlockEntry entry))
             {
@@ -82,7 +83,7 @@ namespace Rendering.MatDataTransfer.Runtime
                 m_PendingPropertyBlocks.Add(entry);
             }
 
-            SetValue(entry.Block, command.BindingResolution.PropertyId, command.Payload.Value);
+            SetValue(entry.Block, command.BindingResolution.PropertyId, command.Payload.Identity.Value);
         }
 
         private void FlushPropertyBlocks()
@@ -108,11 +109,11 @@ namespace Rendering.MatDataTransfer.Runtime
 
         private static bool ApplyMaterial(MaterialWriteCommand command, bool shared)
         {
-            Material material = GetMaterial(command.Renderer, command.Payload.RendererBinding.MaterialSlot, shared);
+            Material material = GetMaterial(command.Renderer, command.Payload.Identity.Binding.MaterialSlot, shared);
             if (material == null)
                 return false;
 
-            SetValue(material, command.BindingResolution.PropertyId, command.Payload.Value);
+            SetValue(material, command.BindingResolution.PropertyId, command.Payload.Identity.Value);
             return true;
         }
 

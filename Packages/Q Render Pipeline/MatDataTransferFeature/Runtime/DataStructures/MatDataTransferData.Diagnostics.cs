@@ -11,18 +11,19 @@ namespace Rendering.MatDataTransfer.Runtime
         public int InstanceId;
         public string GameObjectPath;
 
-        public ParamRendererBinding RendererBinding;
         public string RendererPath;
+        public string ProviderName;
 
         public ParamRequestIdentity Identity;
         public ResolvedMaterialBinding Binding;
         public ParamWriteConfig WriteConfig;
         public ParamWriteMethod WriteMethod;
-        public ParamWriteResultInfo ResultInfo;
-        public ParamWriteStatus Status;
+        public ParamSubmitStep Step;
+        public ParamWriteStatus Status => Step != null ? Step.Status : ParamWriteStatus.Submitted;
 
         public string InspectorDisplayName;
         public string ValuePreview;
+        public string SubmitLogSummary;
         public ulong ValueHash;
 
         public static ulong HashValuePreview(string text)
@@ -48,6 +49,38 @@ namespace Rendering.MatDataTransfer.Runtime
     }
 
     [Serializable]
+    public sealed class MatDataTransferTimelineFrame
+    {
+        public int FrameIndex;
+        public double TimeSinceStartup;
+        public readonly System.Collections.Generic.List<MatDataTransferTimelineRecord> Records =
+            new System.Collections.Generic.List<MatDataTransferTimelineRecord>();
+
+        public MatDataTransferTimelineFrame(
+            int frameIndex,
+            double timeSinceStartup,
+            System.Collections.Generic.IReadOnlyList<MatDataTransferTimelineRecord> records)
+        {
+            FrameIndex = frameIndex;
+            TimeSinceStartup = timeSinceStartup;
+            if (records == null)
+                return;
+
+            for (int i = 0; i < records.Count; i++)
+                Records.Add(records[i]);
+        }
+
+        public void AddRecords(System.Collections.Generic.IReadOnlyList<MatDataTransferTimelineRecord> records)
+        {
+            if (records == null)
+                return;
+
+            for (int i = 0; i < records.Count; i++)
+                Records.Add(records[i]);
+        }
+    }
+
+    [Serializable]
     public sealed class MatDataTransferTimelineLogLine
     {
         public string Schema;
@@ -62,8 +95,7 @@ namespace Rendering.MatDataTransfer.Runtime
         public string RendererPathId;
         public string MaterialTraceId;
         public int PropertyId;
-        public bool Accepted;
-        public bool Applied;
+        public string Stage;
         public string GameObjectPath;
         public string RendererPath;
         public string SourceId;
@@ -77,12 +109,12 @@ namespace Rendering.MatDataTransfer.Runtime
         public string Layer;
         public int Priority;
         public string Status;
-        public string ResultType;
         public string ResultCode;
         public string OverriddenBySourceId;
         public string Message;
         public string InspectorDisplayName;
         public string ValuePreview;
+        public string SubmitLogSummary;
         public string ValueHash;
 
         public static MatDataTransferTimelineLogLine Create(
@@ -99,17 +131,16 @@ namespace Rendering.MatDataTransfer.Runtime
                 Sequence = record.Sequence,
                 TimeSinceStartup = record.TimeSinceStartup,
                 InstanceId = record.InstanceId,
-                RendererId = record.RendererBinding.RendererId,
-                MaterialSlot = record.RendererBinding.MaterialSlot,
-                RendererPathId = record.RendererBinding.RendererPathId,
-                MaterialTraceId = record.RendererBinding.MaterialTraceId,
+                RendererId = record.Identity.Binding.RendererId,
+                MaterialSlot = record.Identity.Binding.MaterialSlot,
+                RendererPathId = record.Identity.Binding.RendererPathId,
+                MaterialTraceId = record.Identity.Binding.MaterialTraceId,
                 PropertyId = record.Binding.PropertyId,
-                Accepted = record.ResultInfo.Accepted,
-                Applied = record.ResultInfo.Applied,
+                Stage = record.Step != null ? record.Step.Stage : string.Empty,
                 GameObjectPath = record.GameObjectPath,
                 RendererPath = record.RendererPath,
                 SourceId = record.Identity.SourceId,
-                ProviderName = record.Identity.ProviderName,
+                ProviderName = record.ProviderName,
                 SemanticKey = record.Identity.SemanticKey,
                 MatchedSemanticKey = record.Binding.MatchedSemanticKey,
                 ShaderName = record.Binding.ShaderName,
@@ -119,12 +150,12 @@ namespace Rendering.MatDataTransfer.Runtime
                 Layer = record.WriteConfig.Layer.ToString(),
                 Priority = record.WriteConfig.Priority,
                 Status = record.Status.ToString(),
-                ResultType = record.ResultInfo.Type.ToString(),
-                ResultCode = record.ResultInfo.Code.ToString(),
-                OverriddenBySourceId = record.ResultInfo.OverriddenBySourceId,
-                Message = record.ResultInfo.Message,
+                ResultCode = record.Step != null ? record.Step.Code.ToString() : ParamWriteResultCode.None.ToString(),
+                OverriddenBySourceId = record.Step != null ? record.Step.OverriddenBySourceId : string.Empty,
+                Message = record.Step != null ? record.Step.Message : string.Empty,
                 InspectorDisplayName = record.InspectorDisplayName,
                 ValuePreview = record.ValuePreview,
+                SubmitLogSummary = record.SubmitLogSummary,
                 ValueHash = record.ValueHash.ToString("X16")
             };
         }
