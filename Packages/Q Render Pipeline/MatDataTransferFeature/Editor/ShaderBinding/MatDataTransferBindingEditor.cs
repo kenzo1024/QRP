@@ -7,11 +7,18 @@ namespace Rendering.MatDataTransfer.Editor
 {
     public sealed class MatDataTransferBindingEditor : EditorWindow
     {
-        private const float SidebarWidth = 360f;
+        private const float DefaultSidebarWidth = 360f;
+        private const float MinSidebarWidth = 260f;
+        private const float MinDetailWidth = 360f;
+        private const float SplitterHitWidth = 8f;
+        private const float SplitterLineWidth = 1f;
+        private const float MinWindowWidth = 760f;
+        private const float MinWindowHeight = 420f;
         private const float RowHeight = 24f;
         private const float DeleteButtonWidth = 24f;
         private const string DefaultConfigFolderName = "Configs";
 
+        private float m_SidebarWidth = DefaultSidebarWidth;
         private ShaderPropertyCatalog m_Catalog;
         private Shader m_Shader;
         private SerializedObject m_CatalogObject;
@@ -24,12 +31,26 @@ namespace Rendering.MatDataTransfer.Editor
         private static void Open()
         {
             MatDataTransferBindingEditor window = GetWindow<MatDataTransferBindingEditor>("Shader Property Catalog");
-            window.InitializeWindow();
+            window.InitializeWindow(true);
         }
 
-        private void InitializeWindow()
+        private void OnEnable()
         {
-            minSize = new Vector2(760f, 420f);
+            InitializeWindow(false);
+        }
+
+        private void InitializeWindow(bool resizeToMinimum)
+        {
+            minSize = new Vector2(MinWindowWidth, MinWindowHeight);
+            ClampSidebarWidth();
+
+            if (!resizeToMinimum)
+                return;
+
+            Rect currentPosition = position;
+            currentPosition.width = MinWindowWidth;
+            currentPosition.height = MinWindowHeight;
+            position = currentPosition;
         }
 
         private void OnGUI()
@@ -107,16 +128,18 @@ namespace Rendering.MatDataTransfer.Editor
             if (properties == null)
                 return;
 
+            ClampSidebarWidth();
             using (new EditorGUILayout.HorizontalScope())
             {
                 DrawListPane(properties);
+                DrawSplitter();
                 DrawDetailPane(properties);
             }
         }
 
         private void DrawListPane(SerializedProperty list)
         {
-            using (new EditorGUILayout.VerticalScope(GUILayout.Width(SidebarWidth)))
+            using (new EditorGUILayout.VerticalScope(GUILayout.Width(m_SidebarWidth)))
             {
                 DrawListHeader(list);
                 m_ListScroll = EditorGUILayout.BeginScrollView(m_ListScroll);
@@ -124,6 +147,65 @@ namespace Rendering.MatDataTransfer.Editor
                     DrawListRow(list, i);
                 EditorGUILayout.EndScrollView();
             }
+        }
+
+        private void DrawSplitter()
+        {
+            Rect rect = GUILayoutUtility.GetRect(
+                SplitterHitWidth,
+                SplitterHitWidth,
+                GUILayout.ExpandHeight(true));
+
+            int controlId = GUIUtility.GetControlID(FocusType.Passive);
+            Event current = Event.current;
+            EditorGUIUtility.AddCursorRect(rect, MouseCursor.ResizeHorizontal);
+
+            DrawSplitterLine(rect, GUIUtility.hotControl == controlId);
+
+            switch (current.GetTypeForControl(controlId))
+            {
+                case EventType.MouseDown:
+                    if (current.button == 0 && rect.Contains(current.mousePosition))
+                    {
+                        GUIUtility.hotControl = controlId;
+                        current.Use();
+                    }
+                    break;
+                case EventType.MouseDrag:
+                    if (GUIUtility.hotControl == controlId)
+                    {
+                        m_SidebarWidth += current.delta.x;
+                        ClampSidebarWidth();
+                        Repaint();
+                        current.Use();
+                    }
+                    break;
+                case EventType.MouseUp:
+                    if (GUIUtility.hotControl == controlId)
+                    {
+                        GUIUtility.hotControl = 0;
+                        current.Use();
+                    }
+                    break;
+            }
+        }
+
+        private static void DrawSplitterLine(Rect rect, bool active)
+        {
+            Color color = active
+                ? new Color(0.92f, 0.42f, 0.22f, 1f)
+                : new Color(0.18f, 0.18f, 0.18f, 1f);
+            float x = Mathf.Round(rect.center.x - SplitterLineWidth * 0.5f);
+            Rect lineRect = new Rect(x, rect.y, SplitterLineWidth, rect.height);
+            EditorGUI.DrawRect(lineRect, color);
+        }
+
+        private void ClampSidebarWidth()
+        {
+            float maxSidebarWidth = Mathf.Max(
+                MinSidebarWidth,
+                position.width - MinDetailWidth - SplitterHitWidth);
+            m_SidebarWidth = Mathf.Clamp(m_SidebarWidth, MinSidebarWidth, maxSidebarWidth);
         }
 
         private void DrawListHeader(SerializedProperty list)
@@ -330,21 +412,12 @@ namespace Rendering.MatDataTransfer.Editor
                 return;
             }
 
-            string path = EditorUtility.SaveFilePanelInProject(
-                "Export Material Param Config",
-                BuildDefaultConfigAssetName(),
-                "asset",
-                "Select save path for Material Param Config",
-                EnsureDefaultConfigFolder());
-
-            if (string.IsNullOrEmpty(path))
-                return;
-
             MaterialParamConfig config = ScriptableObject.CreateInstance<MaterialParamConfig>();
             List<MaterialParameter> parameters = BuildMaterialParameters();
             config.SetDefaultShaderName(GetCatalogShaderName());
             config.SetParameters(parameters);
 
+            string path = BuildUniqueConfigAssetPath(BuildDefaultConfigAssetName());
             AssetDatabase.CreateAsset(config, path);
             AssetDatabase.SaveAssets();
             EditorGUIUtility.PingObject(config);
@@ -469,20 +542,22 @@ namespace Rendering.MatDataTransfer.Editor
         private ShaderPropertyCatalog CreateCatalog(string shaderName)
         {
             string defaultAssetName = BuildDefaultCatalogAssetName(shaderName);
-            string path = EditorUtility.SaveFilePanelInProject(
-                "Create Shader Property Catalog",
-                defaultAssetName,
-                "asset",
-                "Select save path",
-                EnsureDefaultConfigFolder());
-
-            if (string.IsNullOrEmpty(path))
-                return null;
-
             ShaderPropertyCatalog catalog = ScriptableObject.CreateInstance<ShaderPropertyCatalog>();
+            string path = BuildUniqueConfigAssetPath(defaultAssetName);
             AssetDatabase.CreateAsset(catalog, path);
             AssetDatabase.SaveAssets();
             return catalog;
+        }
+
+        private string BuildUniqueConfigAssetPath(string assetName)
+        {
+            string folderPath = EnsureDefaultConfigFolder();
+            string safeAssetName = SanitizeAssetFileName(assetName);
+            if (string.IsNullOrEmpty(safeAssetName))
+                safeAssetName = "MatDataTransferAsset";
+
+            string path = folderPath + "/" + safeAssetName + ".asset";
+            return AssetDatabase.GenerateUniqueAssetPath(path);
         }
 
         private string EnsureDefaultConfigFolder()

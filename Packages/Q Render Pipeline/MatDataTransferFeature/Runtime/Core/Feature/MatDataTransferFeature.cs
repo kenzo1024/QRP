@@ -19,6 +19,9 @@ namespace Rendering.MatDataTransfer.Runtime
         #region Static State
 
         public static MatDataTransferFeature Instance { get; private set; }
+#if UNITY_EDITOR
+        internal static event Action<MatDataTransferFeature> EditorCatalogSyncRequested;
+#endif
 
         #endregion
 
@@ -83,6 +86,9 @@ namespace Rendering.MatDataTransfer.Runtime
             if (HasAnotherPrimaryInstance())
                 return;
 
+#if UNITY_EDITOR
+            RequestEditorCatalogSync();
+#endif
             CleanupPrimaryInstance();
             InitializePrimaryInstance();
         }
@@ -115,6 +121,9 @@ namespace Rendering.MatDataTransfer.Runtime
                 return;
 
             EnsureSerializedSettings();
+#if UNITY_EDITOR
+            RequestEditorCatalogSync();
+#endif
             ApplyInstanceCapacitySetting();
             ApplyLoggerSettings();
             RefreshCatalogCaches();
@@ -195,6 +204,38 @@ namespace Rendering.MatDataTransfer.Runtime
             for (int i = 0; i < m_Catalogs.Count; i++)
                 m_Catalogs[i]?.RebuildPropertyMap();
         }
+
+#if UNITY_EDITOR
+        private void RequestEditorCatalogSync()
+        {
+            EditorCatalogSyncRequested?.Invoke(this);
+        }
+
+        internal bool MergeCatalogsFromEditor(IReadOnlyList<ShaderPropertyCatalog> catalogs)
+        {
+            if (catalogs == null || catalogs.Count == 0)
+                return false;
+
+            if (m_Catalogs == null)
+                m_Catalogs = new List<ShaderPropertyCatalog>();
+
+            bool changed = false;
+            for (int i = 0; i < catalogs.Count; i++)
+            {
+                ShaderPropertyCatalog catalog = catalogs[i];
+                if (catalog == null || m_Catalogs.Contains(catalog))
+                    continue;
+
+                m_Catalogs.Add(catalog);
+                changed = true;
+            }
+
+            if (changed)
+                RefreshCatalogCaches();
+
+            return changed;
+        }
+#endif
 
         #endregion
 

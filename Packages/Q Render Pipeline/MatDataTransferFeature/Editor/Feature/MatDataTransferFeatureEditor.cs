@@ -1,4 +1,5 @@
 using UnityEditor;
+using UnityEditorInternal;
 using UnityEngine;
 using System.Collections.Generic;
 using Rendering.MatDataTransfer.Runtime;
@@ -13,18 +14,23 @@ namespace Rendering.MatDataTransfer.Editor
         private const string LoggingSettingsPropertyName = "m_LoggingSettings";
         private const string MaxInstanceCountPropertyName = "m_MaxInstanceCount";
 
-        private const int RegistryIdMinDigits = 3;
+        private const int RegistryIdMinDigits = 2;
         private const float RegistryColumnGap = 8f;
-        private const float RegistryNameColumnMaxWidth = 180f;
+        private const float RegistryIdColumnPadding = 2f;
+        private const float RegistryNameWidthRatio = 0.4f;
+        private const float RegistryInstanceIdWidthRatio = 0.6f;
+        private const float RegistryDividerWidth = 1f;
+        private static bool s_ShowCatalogs = true;
         private static bool s_ShowInstances = true;
         private static bool s_ShowActiveInstances;
         private static bool s_ShowRequestProviders = true;
-        private static bool s_ShowLogging;
+        private static bool s_ShowLogging = true;
 
         private SerializedProperty m_Catalogs;
         private SerializedProperty m_GenericProviderSettings;
         private SerializedProperty m_LoggingSettings;
         private SerializedProperty m_MaxInstanceCount;
+        private ReorderableList m_CatalogList;
         private readonly List<InstanceRegisterEntry> m_InstanceEntries =
             new List<InstanceRegisterEntry>();
 
@@ -35,6 +41,7 @@ namespace Rendering.MatDataTransfer.Editor
             m_GenericProviderSettings = serializedObject.FindProperty(GenericProviderSettingsPropertyName);
             m_LoggingSettings = serializedObject.FindProperty(LoggingSettingsPropertyName);
             m_MaxInstanceCount = serializedObject.FindProperty(MaxInstanceCountPropertyName);
+            InitializeCatalogList();
         }
 
         public override void OnInspectorGUI()
@@ -64,7 +71,71 @@ namespace Rendering.MatDataTransfer.Editor
 
         private void DrawCatalogs()
         {
-            EditorGUILayout.PropertyField(m_Catalogs, true);
+            bool wasExpanded = s_ShowCatalogs;
+            s_ShowCatalogs = InspectorStyleLibrary.DrawFoldoutLayout(
+                s_ShowCatalogs,
+                "Catalogs",
+                BuildCatalogSummary(),
+                false);
+
+            if (!wasExpanded && s_ShowCatalogs)
+            {
+                MatDataTransferCatalogAutoSync.SyncCatalogsFromConfigFolder((MatDataTransferFeature)target);
+                serializedObject.Update();
+            }
+
+            if (!s_ShowCatalogs)
+                return;
+
+            using (InspectorStyleLibrary.BeginPanelLayout())
+                DrawCatalogList();
+        }
+
+        private string BuildCatalogSummary()
+        {
+            if (m_Catalogs == null)
+                return "0 catalog";
+
+            return m_Catalogs.arraySize == 1
+                ? "1 catalog"
+                : m_Catalogs.arraySize + " catalogs";
+        }
+
+        private void InitializeCatalogList()
+        {
+            if (m_Catalogs == null)
+                return;
+
+            m_CatalogList = new ReorderableList(
+                serializedObject,
+                m_Catalogs,
+                true,
+                false,
+                true,
+                true);
+            m_CatalogList.drawElementCallback = DrawCatalogElement;
+        }
+
+        private void DrawCatalogList()
+        {
+            if (m_CatalogList == null)
+                InitializeCatalogList();
+
+            if (m_CatalogList == null)
+                return;
+
+            m_CatalogList.DoLayoutList();
+        }
+
+        private void DrawCatalogElement(Rect rect, int index, bool isActive, bool isFocused)
+        {
+            if (m_Catalogs == null || index < 0 || index >= m_Catalogs.arraySize)
+                return;
+
+            SerializedProperty element = m_Catalogs.GetArrayElementAtIndex(index);
+            rect.y += 1f;
+            rect.height = EditorGUIUtility.singleLineHeight;
+            EditorGUI.PropertyField(rect, element, new GUIContent("Element " + index));
         }
 
         private void DrawInstances()
@@ -149,10 +220,7 @@ namespace Rendering.MatDataTransfer.Editor
         {
             GUIStyle style = InspectorStyleLibrary.Description;
             float width = style.CalcSize(new GUIContent(FormatRegistryIdPlaceholder())).x;
-            for (int i = 0; i < m_InstanceEntries.Count; i++)
-                width = Mathf.Max(width, style.CalcSize(new GUIContent(FormatRegistryId(m_InstanceEntries[i].Id))).x);
-
-            return Mathf.Ceil(width);
+            return Mathf.Ceil(width + RegistryIdColumnPadding);
         }
 
         private static void DrawRegistryEntry(InstanceRegisterEntry entry, float idColumnWidth)
@@ -168,15 +236,32 @@ namespace Rendering.MatDataTransfer.Editor
             float contentWidth = Mathf.Max(0f, row.xMax - contentX);
             float contentGap = contentWidth > RegistryColumnGap ? RegistryColumnGap : 0f;
             float labelWidth = Mathf.Max(0f, contentWidth - contentGap);
-            float desiredNameWidth = Mathf.Ceil(style.CalcSize(new GUIContent(displayName)).x);
-            float nameWidth = Mathf.Min(RegistryNameColumnMaxWidth, desiredNameWidth, labelWidth);
+            float totalRatio = RegistryNameWidthRatio + RegistryInstanceIdWidthRatio;
+            float nameWidth = totalRatio > 0f
+                ? Mathf.Floor(labelWidth * RegistryNameWidthRatio / totalRatio)
+                : 0f;
             float instanceIdWidth = Mathf.Max(0f, labelWidth - nameWidth);
             Rect nameRect = new Rect(contentX, row.y, nameWidth, row.height);
             Rect instanceIdRect = new Rect(nameRect.xMax + contentGap, row.y, instanceIdWidth, row.height);
 
+            DrawRegistryColumnDivider(idRect.xMax + RegistryColumnGap * 0.5f, row);
+            DrawRegistryColumnDivider(nameRect.xMax + contentGap * 0.5f, row);
             GUI.Label(idRect, new GUIContent(idText, idText), style);
             InspectorStyleLibrary.DrawCopyableTailLabel(nameRect, displayName, style, false);
             InspectorStyleLibrary.DrawCopyableTailLabel(instanceIdRect, instanceId, style, false);
+        }
+
+        private static void DrawRegistryColumnDivider(float x, Rect row)
+        {
+            Color color = EditorGUIUtility.isProSkin
+                ? new Color(0.44f, 0.44f, 0.44f, 0.85f)
+                : new Color(0.56f, 0.56f, 0.56f, 0.85f);
+            Rect dividerRect = new Rect(
+                Mathf.Round(x - RegistryDividerWidth * 0.5f),
+                row.y + 2f,
+                RegistryDividerWidth,
+                Mathf.Max(0f, row.height - 4f));
+            EditorGUI.DrawRect(dividerRect, color);
         }
 
         private static string FormatRegistryId(int id)
@@ -296,6 +381,102 @@ namespace Rendering.MatDataTransfer.Editor
 
             target.name = MatDataTransferFeature.FeatureName;
             EditorUtility.SetDirty(target);
+        }
+    }
+
+    [InitializeOnLoad]
+    internal static class MatDataTransferCatalogAutoSync
+    {
+        private const string DefaultConfigFolderName = "Configs";
+        private static readonly List<ShaderPropertyCatalog> s_Catalogs =
+            new List<ShaderPropertyCatalog>();
+
+        static MatDataTransferCatalogAutoSync()
+        {
+            MatDataTransferFeature.EditorCatalogSyncRequested -= SyncCatalogsFromConfigFolder;
+            MatDataTransferFeature.EditorCatalogSyncRequested += SyncCatalogsFromConfigFolder;
+        }
+
+        internal static void SyncCatalogsFromConfigFolder(MatDataTransferFeature feature)
+        {
+            if (feature == null)
+                return;
+
+            string folderPath = FindFeatureConfigFolderPath(feature);
+            if (string.IsNullOrEmpty(folderPath) || !AssetDatabase.IsValidFolder(folderPath))
+                return;
+
+            CollectCatalogs(folderPath, s_Catalogs);
+            if (feature.MergeCatalogsFromEditor(s_Catalogs))
+                EditorUtility.SetDirty(feature);
+        }
+
+        private static void CollectCatalogs(string folderPath, List<ShaderPropertyCatalog> catalogs)
+        {
+            catalogs.Clear();
+            string[] catalogGuids = AssetDatabase.FindAssets("t:ShaderPropertyCatalog", new[] { folderPath });
+            if (catalogGuids == null || catalogGuids.Length == 0)
+                return;
+
+            for (int i = 0; i < catalogGuids.Length; i++)
+            {
+                string assetPath = AssetDatabase.GUIDToAssetPath(catalogGuids[i]);
+                ShaderPropertyCatalog catalog = AssetDatabase.LoadAssetAtPath<ShaderPropertyCatalog>(assetPath);
+                if (catalog != null)
+                    catalogs.Add(catalog);
+            }
+        }
+
+        private static string FindFeatureConfigFolderPath(MatDataTransferFeature feature)
+        {
+            string rootPath = FindFeatureRootPath(feature);
+            if (string.IsNullOrEmpty(rootPath))
+                return string.Empty;
+
+            return rootPath + "/" + DefaultConfigFolderName;
+        }
+
+        private static string FindFeatureRootPath(MatDataTransferFeature feature)
+        {
+            MonoScript script = MonoScript.FromScriptableObject(feature);
+            string scriptPath = script != null ? AssetDatabase.GetAssetPath(script) : string.Empty;
+            return FindAncestorFolder(scriptPath, nameof(MatDataTransferFeature));
+        }
+
+        private static string FindAncestorFolder(string assetPath, string folderName)
+        {
+            if (string.IsNullOrEmpty(assetPath) || string.IsNullOrEmpty(folderName))
+                return string.Empty;
+
+            string path = assetPath.Replace('\\', '/');
+            int slashIndex = path.LastIndexOf('/');
+            if (slashIndex < 0)
+                return string.Empty;
+
+            path = path.Substring(0, slashIndex);
+            while (!string.IsNullOrEmpty(path))
+            {
+                if (PathEndsWithFolder(path, folderName))
+                    return path;
+
+                slashIndex = path.LastIndexOf('/');
+                if (slashIndex < 0)
+                    break;
+
+                path = path.Substring(0, slashIndex);
+            }
+
+            return string.Empty;
+        }
+
+        private static bool PathEndsWithFolder(string path, string folderName)
+        {
+            int slashIndex = path.LastIndexOf('/');
+            string currentFolder = slashIndex >= 0
+                ? path.Substring(slashIndex + 1)
+                : path;
+
+            return string.Equals(currentFolder, folderName, System.StringComparison.Ordinal);
         }
     }
 }
