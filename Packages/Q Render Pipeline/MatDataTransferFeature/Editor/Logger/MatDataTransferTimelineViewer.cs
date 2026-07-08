@@ -42,7 +42,7 @@ namespace Rendering.MatDataTransfer.Editor
         private int m_SelectedRecordIndex = -1;
         private string m_SelectedRecordKey;
 
-        [MenuItem("Window/Rendering/MatDataTransfer Timeline Viewer")]
+        [MenuItem("TA/角色模型工具/材质传输系统/MatDataTransfer Timeline Viewer")]
         public static void OpenWindow()
         {
             MatDataTransferTimelineViewer window = GetWindow<MatDataTransferTimelineViewer>(WindowTitle);

@@ -19,7 +19,7 @@ namespace Rendering.MatDataTransfer.Editor
         private int m_SelectedIndex = -1;
         private GUIStyle m_RowLabelStyle;
 
-        [MenuItem("Window/Rendering/MatDataTransfer Binding Editor")]
+        [MenuItem("TA/角色模型工具/材质传输系统/MatDataTransfer Binding Editor")]
         private static void Open()
         {
             MatDataTransferBindingEditor window = GetWindow<MatDataTransferBindingEditor>("Shader Property Catalog");
