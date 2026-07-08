@@ -4,8 +4,6 @@ namespace Rendering.MatDataTransfer.Runtime
 {
     internal static class MaterialParameterSubmitter
     {
-        private static int s_SubmitSequence;
-
         internal static ParamSubmitTrace Submit(
             MatDataTransferInstance target,
             string semanticKey,
@@ -45,7 +43,8 @@ namespace Rendering.MatDataTransfer.Runtime
 
         private static ParamSubmitTrace SubmitPayload(ref ParamTransferPayload payload)
         {
-            payload.Sequence = NextSubmitSequence();
+            payload.Sequence = MatDataTransferSubmitSequence.Next(out int submitFrameIndex);
+            payload.SubmitFrameIndex = submitFrameIndex;
             MatDataTransferLogging.AppendSubmitStep(
                 ref payload,
                 ParamSubmitStep.Submitted(
@@ -68,16 +67,6 @@ namespace Rendering.MatDataTransfer.Runtime
 
             MatDataTransferRuntime.RequestEditorUpdate();
             return payload.Trace;
-        }
-
-        private static int NextSubmitSequence()
-        {
-            return unchecked(++s_SubmitSequence);
-        }
-
-        internal static void ResetSubmitSequence()
-        {
-            s_SubmitSequence = 0;
         }
 
         private static bool TryValidate(

@@ -131,6 +131,10 @@ namespace Rendering.MatDataTransfer.Runtime
             if (priority != 0)
                 return priority;
 
+            int submitFrame = left.Payload.SubmitFrameIndex.CompareTo(right.Payload.SubmitFrameIndex);
+            if (submitFrame != 0)
+                return submitFrame;
+
             return left.Payload.Sequence.CompareTo(right.Payload.Sequence);
         }
 

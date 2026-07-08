@@ -10,6 +10,7 @@ namespace Rendering.MatDataTransfer.Runtime
         public ParamRequestIdentity Identity;
         public ParamWriteConfig WriteConfig;
         public string ProviderName;
+        public int SubmitFrameIndex;
         public int Sequence;
         public ParamSubmitTrace Trace;
 
@@ -20,6 +21,7 @@ namespace Rendering.MatDataTransfer.Runtime
             Identity = identity;
             WriteConfig = writeConfig;
             ProviderName = string.Empty;
+            SubmitFrameIndex = -1;
             Sequence = 0;
             Trace = new ParamSubmitTrace();
         }

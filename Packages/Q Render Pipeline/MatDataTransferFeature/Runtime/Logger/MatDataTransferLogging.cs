@@ -227,7 +227,7 @@ namespace Rendering.MatDataTransfer.Runtime
                 return;
             }
 
-            AppendEditorTimelineFrame();
+            AppendEditorTimelineFrames();
             m_TimelineRecords.AddRange(m_FrameTimelineRecords);
             int overflow = m_TimelineRecords.Count - MaxEditorTimelineRecords;
             if (overflow > 0)
@@ -249,25 +249,52 @@ namespace Rendering.MatDataTransfer.Runtime
             m_TimelineVersion++;
         }
 
-        private void AppendEditorTimelineFrame()
+        private void AppendEditorTimelineFrames()
         {
-            int frameIndex = m_FrameTimelineRecords[0].FrameIndex;
-            double timeSinceStartup = m_FrameTimelineRecords[0].TimeSinceStartup;
-            if (m_TimelineFrames.Count > 0 && m_TimelineFrames[0].FrameIndex == frameIndex)
-            {
-                m_TimelineFrames[0].AddRecords(m_FrameTimelineRecords);
-            }
-            else
-            {
-                m_TimelineFrames.Insert(
-                    0,
-                    new MatDataTransferTimelineFrame(
-                        frameIndex,
-                        timeSinceStartup,
-                        m_FrameTimelineRecords));
-            }
+            for (int i = 0; i < m_FrameTimelineRecords.Count; i++)
+                AppendEditorTimelineRecord(m_FrameTimelineRecords[i]);
 
             TrimTimelineFrames();
+        }
+
+        private void AppendEditorTimelineRecord(MatDataTransferTimelineRecord record)
+        {
+            int frameIndex = record.FrameIndex;
+            int existingIndex = FindEditorTimelineFrameIndex(frameIndex);
+            if (existingIndex >= 0)
+            {
+                m_TimelineFrames[existingIndex].Records.Add(record);
+                return;
+            }
+
+            MatDataTransferTimelineFrame frame = new MatDataTransferTimelineFrame(
+                frameIndex,
+                record.TimeSinceStartup,
+                null);
+            frame.Records.Add(record);
+            m_TimelineFrames.Insert(FindEditorTimelineInsertIndex(frameIndex), frame);
+        }
+
+        private int FindEditorTimelineFrameIndex(int frameIndex)
+        {
+            for (int i = 0; i < m_TimelineFrames.Count; i++)
+            {
+                if (m_TimelineFrames[i].FrameIndex == frameIndex)
+                    return i;
+            }
+
+            return -1;
+        }
+
+        private int FindEditorTimelineInsertIndex(int frameIndex)
+        {
+            for (int i = 0; i < m_TimelineFrames.Count; i++)
+            {
+                if (frameIndex > m_TimelineFrames[i].FrameIndex)
+                    return i;
+            }
+
+            return m_TimelineFrames.Count;
         }
 
         private void TrimTimelineFrames()
@@ -336,7 +363,7 @@ namespace Rendering.MatDataTransfer.Runtime
             string preview = payload.Identity.Value.ToPreview();
             timeline.Add(new MatDataTransferTimelineRecord
             {
-                FrameIndex = MatDataTransferRuntime.FrameIndex,
+                FrameIndex = ResolveTimelineFrameIndex(payload),
                 TimeSinceStartup = MatDataTransferRuntime.TimeSinceStartup,
                 Sequence = payload.Sequence,
                 InstanceId = payload.Identity.Target != null ? payload.Identity.Target.InstanceId : -1,
@@ -353,6 +380,13 @@ namespace Rendering.MatDataTransfer.Runtime
                 SubmitLogSummary = BuildLogSummary(submitTrace),
                 ValueHash = MatDataTransferTimelineRecord.HashValuePreview(preview)
             });
+        }
+
+        private static int ResolveTimelineFrameIndex(ParamTransferPayload payload)
+        {
+            return payload.SubmitFrameIndex >= 0
+                ? payload.SubmitFrameIndex
+                : MatDataTransferRuntime.FrameIndex;
         }
 
         private static string BuildDisplayName(

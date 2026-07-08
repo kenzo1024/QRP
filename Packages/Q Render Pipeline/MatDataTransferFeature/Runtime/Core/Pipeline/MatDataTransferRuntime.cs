@@ -9,6 +9,15 @@ namespace Rendering.MatDataTransfer.Runtime
     internal static class MatDataTransferRuntime
     {
         private static int s_EditModeRenderStep;
+#if UNITY_EDITOR
+        private static int s_EditModeSubmitStep;
+
+        static MatDataTransferRuntime()
+        {
+            EditorApplication.update -= AdvanceEditModeSubmitStep;
+            EditorApplication.update += AdvanceEditModeSubmitStep;
+        }
+#endif
 
         internal static int FrameIndex
         {
@@ -17,6 +26,18 @@ namespace Rendering.MatDataTransfer.Runtime
 #if UNITY_EDITOR
                 if (!Application.isPlaying)
                     return s_EditModeRenderStep;
+#endif
+                return Time.frameCount;
+            }
+        }
+
+        internal static int SubmitFrameIndex
+        {
+            get
+            {
+#if UNITY_EDITOR
+                if (!Application.isPlaying)
+                    return s_EditModeSubmitStep;
 #endif
                 return Time.frameCount;
             }
@@ -65,5 +86,13 @@ namespace Rendering.MatDataTransfer.Runtime
             SceneView.RepaintAll();
 #endif
         }
+
+#if UNITY_EDITOR
+        private static void AdvanceEditModeSubmitStep()
+        {
+            if (!Application.isPlaying)
+                unchecked { s_EditModeSubmitStep++; }
+        }
+#endif
     }
 }

@@ -68,7 +68,6 @@ namespace Rendering.MatDataTransfer.Runtime
             finally
             {
                 Logging.CompleteFrame();
-                MaterialParameterSubmitter.ResetSubmitSequence();
             }
         }
 

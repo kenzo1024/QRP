@@ -5,22 +5,18 @@ namespace Rendering.MatDataTransfer.Runtime
 {
     public partial class MatDataTransferFeature
     {
-        private readonly Dictionary<long, PropertyBlockEntry> m_PropertyBlockEntries =
-            new Dictionary<long, PropertyBlockEntry>();
-        private readonly List<PropertyBlockEntry> m_PendingPropertyBlocks = new List<PropertyBlockEntry>();
-
         private void ApplyWriteCommands(IReadOnlyList<MaterialWriteCommand> commands)
         {
             if (commands == null)
                 return;
 
-            m_PendingPropertyBlocks.Clear();
+            BeginWriteTargetFrame();
             for (int i = 0; i < commands.Count; i++)
             {
                 MaterialWriteCommand command = commands[i];
-                ParamWriteMethod writeMethod = ApplyWriteCommand(command);
+                ParamWriteMethod writeMethod = ApplyWriteCommand(command, out string failureReason);
                 ParamSubmitStep step = writeMethod == ParamWriteMethod.None
-                    ? ParamSubmitStep.WriterFailed("Write.Apply")
+                    ? ParamSubmitStep.WriterFailed("Write.Apply", failureReason)
                     : ParamSubmitStep.Applied("Write.Apply", "Write applied.");
 
                 ParamTransferPayload payload = command.Payload;
@@ -36,94 +32,68 @@ namespace Rendering.MatDataTransfer.Runtime
             FlushPropertyBlocks();
         }
 
-        private ParamWriteMethod ApplyWriteCommand(MaterialWriteCommand command)
+        private ParamWriteMethod ApplyWriteCommand(MaterialWriteCommand command, out string failureReason)
         {
-            if (command.Renderer == null || command.Property?.PropertyInfo == null)
+            if (!TryCreateWriteTarget(command, out MaterialWriteTarget target, out failureReason))
                 return ParamWriteMethod.None;
 
 #if UNITY_EDITOR
-            if (TryApplyPropertyBlock(command))
+            if (TryApplyPropertyBlock(command, target, out failureReason))
+            {
+                failureReason = string.Empty;
                 return ParamWriteMethod.MaterialPropertyBlock;
-            if (ApplyMaterial(command, false))
+            }
+            if (TryApplyMaterial(command, target, false, out failureReason))
+            {
+                failureReason = string.Empty;
                 return ParamWriteMethod.MaterialInstance;
+            }
 #else
-            if (ApplyMaterial(command, false))
+            if (TryApplyMaterial(command, target, false, out failureReason))
+            {
+                failureReason = string.Empty;
                 return ParamWriteMethod.MaterialInstance;
-            if (TryApplyPropertyBlock(command))
+            }
+            if (TryApplyPropertyBlock(command, target, out failureReason))
+            {
+                failureReason = string.Empty;
                 return ParamWriteMethod.MaterialPropertyBlock;
+            }
 #endif
-            if (ApplyMaterial(command, true))
+            if (TryApplyMaterial(command, target, true, out failureReason))
+            {
+                failureReason = string.Empty;
                 return ParamWriteMethod.SharedMaterial;
+            }
 
+            if (string.IsNullOrEmpty(failureReason))
+                failureReason = "Write target resource became unavailable.";
             return ParamWriteMethod.None;
         }
 
-        private bool TryApplyPropertyBlock(MaterialWriteCommand command)
+        private bool TryApplyPropertyBlock(
+            MaterialWriteCommand command,
+            MaterialWriteTarget target,
+            out string failureReason)
         {
-            QueuePropertyBlock(command);
-            return true;
-        }
-
-        private void QueuePropertyBlock(MaterialWriteCommand command)
-        {
-            int rendererId = command.Renderer.GetInstanceID();
-            int materialSlot = command.Payload.Identity.Binding.MaterialSlot;
-            long key = PropertyBlockEntry.GetLookupKey(rendererId, materialSlot);
-            if (!m_PropertyBlockEntries.TryGetValue(key, out PropertyBlockEntry entry))
-            {
-                entry = new PropertyBlockEntry(rendererId, command.Renderer, materialSlot);
-                m_PropertyBlockEntries.Add(key, entry);
-            }
-
-            entry.UpdateRenderer(command.Renderer);
-            if (!entry.IsQueued)
-            {
-                entry.ReadCurrentBlock();
-                entry.IsQueued = true;
-                m_PendingPropertyBlocks.Add(entry);
-            }
-
-            SetValue(entry.Block, command.BindingResolution.PropertyId, command.Payload.Identity.Value);
-        }
-
-        private void FlushPropertyBlocks()
-        {
-            for (int i = 0; i < m_PendingPropertyBlocks.Count; i++)
-            {
-                PropertyBlockEntry entry = m_PendingPropertyBlocks[i];
-                entry.Flush();
-                entry.IsQueued = false;
-            }
-
-            m_PendingPropertyBlocks.Clear();
-        }
-
-        private void ClearWrittenState()
-        {
-            foreach (PropertyBlockEntry entry in m_PropertyBlockEntries.Values)
-                entry.Clear();
-
-            m_PropertyBlockEntries.Clear();
-            m_PendingPropertyBlocks.Clear();
-        }
-
-        private static bool ApplyMaterial(MaterialWriteCommand command, bool shared)
-        {
-            Material material = GetMaterial(command.Renderer, command.Payload.Identity.Binding.MaterialSlot, shared);
-            if (material == null)
+            if (!TryGetPropertyBlock(target, out MaterialPropertyBlock block, out failureReason))
                 return false;
 
-            SetValue(material, command.BindingResolution.PropertyId, command.Payload.Identity.Value);
+            SetValue(block, target.PropertyId, command.Payload.Identity.Value);
             return true;
         }
 
-        private static Material GetMaterial(Renderer renderer, int materialSlot, bool shared)
+        private static bool TryApplyMaterial(
+            MaterialWriteCommand command,
+            MaterialWriteTarget target,
+            bool shared,
+            out string failureReason)
         {
-            Material[] materials = shared ? renderer.sharedMaterials : renderer.materials;
-            if (materials == null || materialSlot < 0 || materialSlot >= materials.Length)
-                return null;
+            if (!TryGetMaterial(target, shared, out Material material, out failureReason))
+                return false;
 
-            return materials[materialSlot];
+            SetValue(material, target.PropertyId, command.Payload.Identity.Value);
+            return true;
         }
 
         private static void SetValue(MaterialPropertyBlock block, int propertyId, ParamValue value)
@@ -164,51 +134,5 @@ namespace Rendering.MatDataTransfer.Runtime
             }
         }
 
-        private sealed class PropertyBlockEntry
-        {
-            private readonly int m_RendererId;
-            private Renderer m_Renderer;
-
-            public readonly int MaterialSlot;
-            public readonly MaterialPropertyBlock Block;
-            public bool IsQueued;
-
-            public PropertyBlockEntry(int rendererId, Renderer renderer, int materialSlot)
-            {
-                m_RendererId = rendererId;
-                m_Renderer = renderer;
-                MaterialSlot = materialSlot;
-                Block = new MaterialPropertyBlock();
-            }
-
-            public static long GetLookupKey(int rendererId, int materialSlot)
-            {
-                return ((long)rendererId << 32) ^ (uint)materialSlot;
-            }
-
-            public void UpdateRenderer(Renderer renderer)
-            {
-                if (renderer != null && renderer.GetInstanceID() == m_RendererId)
-                    m_Renderer = renderer;
-            }
-
-            public void ReadCurrentBlock()
-            {
-                if (m_Renderer != null)
-                    m_Renderer.GetPropertyBlock(Block, MaterialSlot);
-            }
-
-            public void Flush()
-            {
-                if (m_Renderer != null)
-                    m_Renderer.SetPropertyBlock(Block, MaterialSlot);
-            }
-
-            public void Clear()
-            {
-                if (m_Renderer != null)
-                    m_Renderer.SetPropertyBlock(null, MaterialSlot);
-            }
-        }
     }
 }
