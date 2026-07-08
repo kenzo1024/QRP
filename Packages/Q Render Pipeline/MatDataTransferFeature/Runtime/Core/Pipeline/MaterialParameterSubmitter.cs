@@ -10,7 +10,7 @@ namespace Rendering.MatDataTransfer.Runtime
             ParamValue value,
             RendererMaterialBinding binding,
             MatDataTransferSubmitSource source,
-            ParamWriteLayer layer = ParamWriteLayer.Gameplay,
+            ParamWriteLayer layer,
             int priority = 0)
         {
             ParamRequestIdentity identity = new ParamRequestIdentity(
@@ -34,7 +34,7 @@ namespace Rendering.MatDataTransfer.Runtime
             Renderer targetRenderer,
             int materialSlot,
             MatDataTransferSubmitSource source,
-            ParamWriteLayer layer = ParamWriteLayer.Gameplay,
+            ParamWriteLayer layer,
             int priority = 0)
         {
             RendererMaterialBinding binding = ResolveTargetBinding(target, targetRenderer, materialSlot);

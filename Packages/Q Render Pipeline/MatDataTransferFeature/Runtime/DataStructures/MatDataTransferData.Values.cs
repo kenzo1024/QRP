@@ -5,9 +5,11 @@ namespace Rendering.MatDataTransfer.Runtime
 {
     public enum ParamWriteLayer
     {
-        Gameplay = 200,
-        VFX = 300,
-        MaterialDefault = 0
+        Default = 0,
+        VFX = 100,
+        Timeline = 200,
+        Gameplay = 300,
+        Character = 400
     }
 
     public static class ParamWriteLayers
@@ -16,12 +18,16 @@ namespace Rendering.MatDataTransfer.Runtime
         {
             switch (layer)
             {
-                case ParamWriteLayer.MaterialDefault:
-                    return 300;
+                case ParamWriteLayer.Default:
+                    return 0;
                 case ParamWriteLayer.VFX:
+                    return 100;
+                case ParamWriteLayer.Timeline:
                     return 200;
                 case ParamWriteLayer.Gameplay:
-                    return 100;
+                    return 300;
+                case ParamWriteLayer.Character:
+                    return 400;
                 default:
                     return 0;
             }

@@ -10,7 +10,7 @@ namespace Rendering.MatDataTransfer.Runtime
             ParamValue value,
             RendererMaterialBinding binding,
             MatDataTransferSubmitSource source,
-            ParamWriteLayer layer = ParamWriteLayer.Gameplay,
+            ParamWriteLayer layer,
             int priority = 0)
         {
             return MaterialParameterSubmitter.Submit(
@@ -30,7 +30,7 @@ namespace Rendering.MatDataTransfer.Runtime
             Renderer targetRenderer,
             int materialSlot,
             MatDataTransferSubmitSource source,
-            ParamWriteLayer layer = ParamWriteLayer.Gameplay,
+            ParamWriteLayer layer,
             int priority = 0)
         {
             return MaterialParameterSubmitter.ForMaterial(

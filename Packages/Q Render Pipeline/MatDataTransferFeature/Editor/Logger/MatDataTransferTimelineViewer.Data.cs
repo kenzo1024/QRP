@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Text;
 using Rendering.MatDataTransfer.Runtime;
 using UnityEditor;
 using UnityEngine;
@@ -49,7 +50,7 @@ namespace Rendering.MatDataTransfer.Editor
 
             try
             {
-                using (StreamReader reader = new StreamReader(path))
+                using (StreamReader reader = new StreamReader(path, Encoding.UTF8))
                 {
                     while (!reader.EndOfStream)
                         AddFileLine(reader.ReadLine());
@@ -347,7 +348,7 @@ namespace Rendering.MatDataTransfer.Editor
                     line.CatalogName,
                     line.PropertyName,
                     line.PropertyId),
-                WriteConfig = new ParamWriteConfig(ParseEnum(line.Layer, ParamWriteLayer.Gameplay), line.Priority),
+                WriteConfig = new ParamWriteConfig(ParseEnum(line.Layer, ParamWriteLayer.Default), line.Priority),
                 WriteMethod = ParseEnum(line.WriteMethod, ParamWriteMethod.None),
                 Step = new ParamSubmitStep(
                     line.Stage,

@@ -37,33 +37,21 @@ namespace Rendering.MatDataTransfer.Runtime
             if (!TryCreateWriteTarget(command, out MaterialWriteTarget target, out failureReason))
                 return ParamWriteMethod.None;
 
-#if UNITY_EDITOR
-            if (TryApplyPropertyBlock(command, target, out failureReason))
+            if (ShouldWriteWithPropertyBlock())
             {
-                failureReason = string.Empty;
-                return ParamWriteMethod.MaterialPropertyBlock;
+                if (TryApplyPropertyBlock(command, target, out failureReason))
+                {
+                    failureReason = string.Empty;
+                    return ParamWriteMethod.MaterialPropertyBlock;
+                }
+
+                return ParamWriteMethod.None;
             }
-            if (TryApplyMaterial(command, target, false, out failureReason))
+
+            if (TryApplyMaterial(command, target, out failureReason))
             {
                 failureReason = string.Empty;
                 return ParamWriteMethod.MaterialInstance;
-            }
-#else
-            if (TryApplyMaterial(command, target, false, out failureReason))
-            {
-                failureReason = string.Empty;
-                return ParamWriteMethod.MaterialInstance;
-            }
-            if (TryApplyPropertyBlock(command, target, out failureReason))
-            {
-                failureReason = string.Empty;
-                return ParamWriteMethod.MaterialPropertyBlock;
-            }
-#endif
-            if (TryApplyMaterial(command, target, true, out failureReason))
-            {
-                failureReason = string.Empty;
-                return ParamWriteMethod.SharedMaterial;
             }
 
             if (string.IsNullOrEmpty(failureReason))
@@ -83,13 +71,21 @@ namespace Rendering.MatDataTransfer.Runtime
             return true;
         }
 
+        private static bool ShouldWriteWithPropertyBlock()
+        {
+#if UNITY_EDITOR
+            return !Application.isPlaying;
+#else
+            return false;
+#endif
+        }
+
         private static bool TryApplyMaterial(
             MaterialWriteCommand command,
             MaterialWriteTarget target,
-            bool shared,
             out string failureReason)
         {
-            if (!TryGetMaterial(target, shared, out Material material, out failureReason))
+            if (!TryGetMaterial(target, false, out Material material, out failureReason))
                 return false;
 
             SetValue(material, target.PropertyId, command.Payload.Identity.Value);
