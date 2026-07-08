@@ -65,6 +65,12 @@ namespace Rendering.MatDataTransfer.Editor
         private void DrawCatalogs()
         {
             EditorGUILayout.PropertyField(m_Catalogs, true);
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                GUILayout.FlexibleSpace();
+                if (GUILayout.Button("Open Binding Editor", GUILayout.Width(160f)))
+                    MatDataTransferBindingEditor.Open((MatDataTransferFeature)target);
+            }
         }
 
         private void DrawInstances()
