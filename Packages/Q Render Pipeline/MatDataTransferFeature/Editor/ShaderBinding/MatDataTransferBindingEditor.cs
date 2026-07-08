@@ -11,9 +11,7 @@ namespace Rendering.MatDataTransfer.Editor
         private const float RowHeight = 24f;
         private const float DeleteButtonWidth = 24f;
         private const string DefaultConfigFolderName = "Configs";
-        private const string CatalogsPropertyName = "m_Catalogs";
 
-        private MatDataTransferFeature m_Feature;
         private ShaderPropertyCatalog m_Catalog;
         private Shader m_Shader;
         private SerializedObject m_CatalogObject;
@@ -29,18 +27,9 @@ namespace Rendering.MatDataTransfer.Editor
             window.InitializeWindow();
         }
 
-        public static void Open(MatDataTransferFeature feature)
-        {
-            MatDataTransferBindingEditor window = GetWindow<MatDataTransferBindingEditor>("Shader Property Catalog");
-            window.InitializeWindow();
-            window.SetFeature(feature);
-        }
-
         private void InitializeWindow()
         {
             minSize = new Vector2(760f, 420f);
-            if (m_Feature == null)
-                SetFeature(Selection.activeObject as MatDataTransferFeature);
         }
 
         private void OnGUI()
@@ -58,16 +47,6 @@ namespace Rendering.MatDataTransfer.Editor
         {
             InspectorStyleLibrary.DrawTitle("Shader Property Catalog Editor");
             EditorGUILayout.Space(4);
-
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                EditorGUILayout.LabelField("Feature", InspectorStyleLibrary.ParameterName, GUILayout.Width(60));
-                MatDataTransferFeature selectedFeature = (MatDataTransferFeature)EditorGUILayout.ObjectField(
-                    m_Feature,
-                    typeof(MatDataTransferFeature),
-                    false);
-                SetFeature(selectedFeature);
-            }
 
             using (new EditorGUILayout.HorizontalScope())
             {
@@ -430,14 +409,6 @@ namespace Rendering.MatDataTransfer.Editor
             m_Shader = m_Catalog != null ? m_Catalog.Shader : null;
         }
 
-        private void SetFeature(MatDataTransferFeature feature)
-        {
-            if (m_Feature == feature)
-                return;
-
-            m_Feature = feature;
-        }
-
         private string BuildDefaultConfigAssetName()
         {
             string shaderFileName = SanitizeAssetFileName(GetSelectedShaderName());
@@ -453,7 +424,6 @@ namespace Rendering.MatDataTransfer.Editor
                 return;
 
             m_Catalog = createdCatalog;
-            AddCatalogToCurrentFeature(createdCatalog);
             ResetCatalogEditorState();
         }
 
@@ -513,40 +483,6 @@ namespace Rendering.MatDataTransfer.Editor
             AssetDatabase.CreateAsset(catalog, path);
             AssetDatabase.SaveAssets();
             return catalog;
-        }
-
-        private void AddCatalogToCurrentFeature(ShaderPropertyCatalog catalog)
-        {
-            if (m_Feature == null || catalog == null)
-                return;
-
-            SerializedObject featureObject = new SerializedObject(m_Feature);
-            SerializedProperty catalogs = featureObject.FindProperty(CatalogsPropertyName);
-            if (catalogs == null || ContainsCatalog(catalogs, catalog))
-                return;
-
-            int index = catalogs.arraySize;
-            catalogs.InsertArrayElementAtIndex(index);
-            catalogs.GetArrayElementAtIndex(index).objectReferenceValue = catalog;
-
-            featureObject.ApplyModifiedProperties();
-            EditorUtility.SetDirty(m_Feature);
-            AssetDatabase.SaveAssets();
-        }
-
-        private static bool ContainsCatalog(SerializedProperty catalogs, ShaderPropertyCatalog catalog)
-        {
-            if (catalogs == null || catalog == null)
-                return false;
-
-            for (int i = 0; i < catalogs.arraySize; i++)
-            {
-                SerializedProperty item = catalogs.GetArrayElementAtIndex(i);
-                if (item != null && item.objectReferenceValue == catalog)
-                    return true;
-            }
-
-            return false;
         }
 
         private string EnsureDefaultConfigFolder()
