@@ -1,0 +1,18 @@
+{
+  "name": "com.qrp",
+  "description": "QTAU6 custom render pipeline package forked from Universal Render Pipeline shader structure for reverse-engineering End shader behavior.",
+  "version": "0.1.0",
+  "unity": "6000.4",
+  "displayName": "Q Render Pipeline",
+  "dependencies": {
+    "com.unity.render-pipelines.core": "17.4.0",
+    "com.unity.render-pipelines.universal": "17.4.0"
+  },
+  "keywords": [
+    "graphics",
+    "rendering",
+    "render",
+    "pipeline",
+    "qrp"
+  ]
+}
