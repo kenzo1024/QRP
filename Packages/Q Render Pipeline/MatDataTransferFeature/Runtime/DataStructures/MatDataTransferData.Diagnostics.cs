@@ -15,7 +15,7 @@ namespace Rendering.MatDataTransfer.Runtime
         public string ProviderName;
 
         public ParamRequestIdentity Identity;
-        public ResolvedMaterialBinding Binding;
+        public ParamBindingResolution Binding;
         public ParamWriteConfig WriteConfig;
         public ParamWriteMethod WriteMethod;
         public ParamSubmitStep Step;

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace Rendering.MatDataTransfer.Runtime
@@ -41,6 +42,105 @@ namespace Rendering.MatDataTransfer.Runtime
             return Submit(target, semanticKey, value, binding, source, layer, priority);
         }
 
+        internal static ParamSubmitTrace Submit(
+            MatDataTransferInstance target,
+            string semanticKey,
+            ParamValue value,
+            ParamSubmitScope scope,
+            MatDataTransferSubmitSource source,
+            ParamWriteLayer layer,
+            int priority = 0)
+        {
+            if (scope.Mode == ParamSubmitScopeMode.Material)
+            {
+                return ForMaterial(
+                    target,
+                    semanticKey,
+                    value,
+                    scope.Renderer,
+                    scope.MaterialSlot,
+                    source,
+                    layer,
+                    priority);
+            }
+
+            ParamSubmitTrace rootTrace = new ParamSubmitTrace();
+            rootTrace.AddStep(ParamSubmitStep.Submitted(
+                "Scope.Begin",
+                "Scope submit created."));
+
+            if (!TryValidateScopeRoot(target, semanticKey, scope, source, rootTrace))
+                return rootTrace;
+
+            rootTrace.MarkBatchRoot();
+            MatDataTransferFeature feature = MatDataTransferFeature.Instance;
+            IReadOnlyList<RendererMaterialBinding> bindings = target.Bindings;
+            for (int i = 0; i < bindings.Count; i++)
+            {
+                RendererMaterialBinding binding = bindings[i];
+                if (!IsBindingInsideScope(binding, scope))
+                    continue;
+
+                if (!BindingSupportsKey(binding, semanticKey, feature))
+                {
+                    rootTrace.AddSkipped();
+                    continue;
+                }
+
+                ParamSubmitTrace childTrace = Submit(
+                    target,
+                    semanticKey,
+                    value,
+                    binding,
+                    source,
+                    layer,
+                    priority);
+                rootTrace.AddChild(childTrace);
+            }
+
+            rootTrace.AddStep(ParamSubmitStep.Queued(
+                "Scope.Expand",
+                $"Scope expanded: {rootTrace.Children.Count} submitted, {rootTrace.SkippedCount} skipped."));
+            return rootTrace;
+        }
+
+        internal static ParamSubmitTrace ForInstance(
+            MatDataTransferInstance target,
+            string semanticKey,
+            ParamValue value,
+            MatDataTransferSubmitSource source,
+            ParamWriteLayer layer,
+            int priority = 0)
+        {
+            return Submit(
+                target,
+                semanticKey,
+                value,
+                ParamSubmitScope.SupportsKey(),
+                source,
+                layer,
+                priority);
+        }
+
+        internal static ParamSubmitTrace ForShader(
+            MatDataTransferInstance target,
+            string shaderName,
+            string semanticKey,
+            ParamValue value,
+            MatDataTransferSubmitSource source,
+            ParamWriteLayer layer,
+            int priority = 0)
+        {
+            return Submit(
+                target,
+                semanticKey,
+                value,
+                ParamSubmitScope.Shader(shaderName),
+                source,
+                layer,
+                priority);
+        }
+
         private static ParamSubmitTrace SubmitPayload(ref ParamTransferPayload payload)
         {
             payload.Sequence = MatDataTransferSubmitSequence.Next(out int submitFrameIndex);
@@ -59,7 +159,9 @@ namespace Rendering.MatDataTransfer.Runtime
                 return payload.Trace;
             }
 
-            if (!GenericMaterialParameterProvider.TryQueue(ref payload))
+            if (!feature.TrySubmitRequestToProvider(
+                MatDataTransferProviderNames.GenericMaterialParameter,
+                ref payload))
             {
                 MatDataTransferLogging.CaptureSubmitSnapshot(ref payload);
                 return payload.Trace;
@@ -116,7 +218,7 @@ namespace Rendering.MatDataTransfer.Runtime
                     ParamWriteResultCode.FeatureMissing,
                     "No active MatDataTransferFeature.");
 
-            if (feature.GetRequestProvider(MatDataTransferProviderNames.GenericMaterialParameter) == null)
+            if (!feature.HasRequestProvider(MatDataTransferProviderNames.GenericMaterialParameter))
                 return RejectSubmit(
                     ref payload,
                     ParamWriteResultCode.ProviderUnavailable,
@@ -162,6 +264,76 @@ namespace Rendering.MatDataTransfer.Runtime
                     code,
                     message));
             return false;
+        }
+
+        private static bool TryValidateScopeRoot(
+            MatDataTransferInstance target,
+            string semanticKey,
+            ParamSubmitScope scope,
+            MatDataTransferSubmitSource source,
+            ParamSubmitTrace trace)
+        {
+            if (target == null)
+                return RejectScope(trace, ParamWriteResultCode.InstanceMissing, "Target instance is missing.");
+
+            if (string.IsNullOrWhiteSpace(semanticKey))
+                return RejectScope(trace, ParamWriteResultCode.SemanticKeyMissing, "Semantic key is empty.");
+
+            if (string.IsNullOrWhiteSpace(source.Id))
+                return RejectScope(trace, ParamWriteResultCode.SourceIdMissing, "Submit source id is empty.");
+
+            if (!target.IsReady)
+                return RejectScope(trace, ParamWriteResultCode.InstanceMissing, "Target instance is not registered by MatDataTransferFeature.");
+
+            if (MatDataTransferFeature.Instance == null)
+                return RejectScope(trace, ParamWriteResultCode.FeatureMissing, "No active MatDataTransferFeature.");
+
+            if (target.Bindings == null)
+                return RejectScope(trace, ParamWriteResultCode.BindingMissing, "Target instance has no renderer/material bindings.");
+
+            if (scope.Mode == ParamSubmitScopeMode.Shader && string.IsNullOrWhiteSpace(scope.ShaderName))
+                return RejectScope(trace, ParamWriteResultCode.BindingMissing, "Shader scope needs a shader name.");
+
+            return true;
+        }
+
+        private static bool RejectScope(
+            ParamSubmitTrace trace,
+            ParamWriteResultCode code,
+            string message)
+        {
+            trace?.AddStep(ParamSubmitStep.Rejected(
+                "Scope.Validate",
+                code,
+                message));
+            return false;
+        }
+
+        private static bool IsBindingInsideScope(RendererMaterialBinding binding, ParamSubmitScope scope)
+        {
+            if (binding == null)
+                return false;
+
+            if (scope.Mode != ParamSubmitScopeMode.Shader)
+                return true;
+
+            return string.Equals(binding.ShaderName, scope.ShaderName, System.StringComparison.Ordinal);
+        }
+
+        private static bool BindingSupportsKey(
+            RendererMaterialBinding binding,
+            string semanticKey,
+            MatDataTransferFeature feature)
+        {
+            if (binding == null || feature == null)
+                return false;
+
+            return TryFindCatalogProperty(
+                binding,
+                semanticKey,
+                feature,
+                out _,
+                out _);
         }
 
         private static bool TryFindCatalogProperty(

@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using UnityEngine;
 
 namespace Rendering.MatDataTransfer.Runtime
 {
@@ -14,20 +13,22 @@ namespace Rendering.MatDataTransfer.Runtime
     {
         internal const string ProviderName = MatDataTransferProviderNames.GenericMaterialParameter;
 
-        private static readonly List<ParamTransferPayload> s_Requests =
+        private readonly List<ParamTransferPayload> m_Requests =
             new List<ParamTransferPayload>();
-        internal GenericMaterialParameterProvider() { }
+        private readonly GenericMaterialParameterProviderSettings m_Settings;
+
+        internal GenericMaterialParameterProvider(GenericMaterialParameterProviderSettings settings)
+        {
+            m_Settings = settings;
+        }
 
         public string Name => ProviderName;
 
-        internal static bool TryQueue(ref ParamTransferPayload payload)
+        public bool TrySubmit(ref ParamTransferPayload payload)
         {
-            MatDataTransferFeature feature = MatDataTransferFeature.Instance;
-            if (feature == null
-                || !feature.IsGenericMaterialParameterProviderEnabled
-                || feature.GetRequestProvider(ProviderName) == null)
+            if (!IsEnabled())
             {
-                ClearAllRequests();
+                ClearRequests();
                 MatDataTransferLogging.AppendSubmitStep(
                     ref payload,
                     ParamSubmitStep.Rejected(
@@ -43,23 +44,23 @@ namespace Rendering.MatDataTransfer.Runtime
                 ParamSubmitStep.Queued(
                     "Submit.Queue",
                     "Submit accepted."));
-            s_Requests.Add(payload);
+            m_Requests.Add(payload);
 
             return true;
         }
 
-        internal static bool TryClearQueuedRequests(MatDataTransferInstance instance)
+        public bool TryClearRequests(MatDataTransferInstance instance)
         {
-            if (!IsProviderEnabled() || instance == null)
+            if (!IsEnabled() || instance == null)
                 return false;
 
             bool removed = false;
-            for (int i = s_Requests.Count - 1; i >= 0; i--)
+            for (int i = m_Requests.Count - 1; i >= 0; i--)
             {
-                if (!ReferenceEquals(s_Requests[i].Identity.Target, instance))
+                if (!ReferenceEquals(m_Requests[i].Identity.Target, instance))
                     continue;
 
-                s_Requests.RemoveAt(i);
+                m_Requests.RemoveAt(i);
                 removed = true;
             }
 
@@ -68,35 +69,31 @@ namespace Rendering.MatDataTransfer.Runtime
 
         public void Dispose()
         {
-            ClearAllRequests();
+            ClearRequests();
         }
 
-        public void SubmitRequests(MaterialWriteContext context)
+        public void SubmitRequests(ParamRequestContext context)
         {
-            if (context == null || !IsProviderEnabled())
+            if (context == null || !IsEnabled())
             {
-                ClearAllRequests();
+                ClearRequests();
                 return;
             }
 
-            for (int i = 0; i < s_Requests.Count; i++)
-                context.Submit(s_Requests[i]);
+            for (int i = 0; i < m_Requests.Count; i++)
+                context.Submit(m_Requests[i]);
 
-            s_Requests.Clear();
+            m_Requests.Clear();
         }
 
-        public static void ClearAllRequests()
+        public void ClearRequests()
         {
-            s_Requests.Clear();
+            m_Requests.Clear();
         }
 
-        private static bool IsProviderEnabled()
+        private bool IsEnabled()
         {
-            MatDataTransferFeature feature = MatDataTransferFeature.Instance;
-            return feature != null
-                && feature.IsGenericMaterialParameterProviderEnabled
-                && feature.GetRequestProvider(ProviderName) != null;
+            return m_Settings != null && m_Settings.Enabled;
         }
-
     }
 }

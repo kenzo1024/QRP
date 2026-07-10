@@ -10,11 +10,11 @@ namespace Rendering.MatDataTransfer.Editor
         private const float FoldoutSummaryGap = 8f;
         public const float FoldoutPanelLeftPadding = 14f;
         private static readonly Color ListItemEvenColor = EditorGUIUtility.isProSkin
-            ? new Color(0.20f, 0.20f, 0.20f, 1f)
-            : new Color(0.89f, 0.89f, 0.89f, 1f);
+            ? new Color(0.225f, 0.225f, 0.225f, 1f)
+            : new Color(0.885f, 0.885f, 0.885f, 1f);
         private static readonly Color ListItemOddColor = EditorGUIUtility.isProSkin
-            ? new Color(0.30f, 0.30f, 0.30f, 1f)
-            : new Color(0.83f, 0.83f, 0.83f, 1f);
+            ? new Color(0.275f, 0.275f, 0.275f, 1f)
+            : new Color(0.835f, 0.835f, 0.835f, 1f);
         private static readonly Color DescriptionColor = EditorGUIUtility.isProSkin
             ? new Color(0.64f, 0.64f, 0.64f)
             : new Color(0.42f, 0.42f, 0.42f);

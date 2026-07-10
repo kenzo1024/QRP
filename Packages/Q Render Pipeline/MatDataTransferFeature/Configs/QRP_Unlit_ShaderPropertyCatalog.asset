@@ -1,0 +1,48 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ab418489ad104ca29e7b01b122145dd1, type: 3}
+  m_Name: QRP_Unlit_ShaderPropertyCatalog
+  m_EditorClassIdentifier: REP.MatDataTransfer.Runtime::Rendering.MatDataTransfer.Runtime.ShaderPropertyCatalog
+  catalogVersion: 2.0
+  syncTime: 2026-07-09 03:14:44
+  shaderGuid: 6a12d72a332b4a94aa08c930676f5c24
+  shaderName: QRP/Unlit
+  shader: {fileID: 4800000, guid: 6a12d72a332b4a94aa08c930676f5c24, type: 3}
+  properties:
+  - PropertyInfo:
+      PropertyName: _BaseColor
+      InspectorDisplayName: Base Color
+      ValueType: 1
+      Attributes:
+      - MatDataTransfer
+      DefaultValue:
+        Type: 1
+        FloatValue: 0
+        VectorValue: {x: 0, y: 0, z: 0, w: 0}
+        ColorValue: {r: 1, g: 1, b: 1, a: 1}
+        TextureValue: {fileID: 0}
+    SuggestedSemanticKey: common._basecolor
+    Status: 0
+  - PropertyInfo:
+      PropertyName: _TestFloat
+      InspectorDisplayName: Test RGB Brightness
+      ValueType: 0
+      Attributes:
+      - MatDataTransfer
+      DefaultValue:
+        Type: 0
+        FloatValue: 0
+        VectorValue: {x: 0, y: 0, z: 0, w: 0}
+        ColorValue: {r: 0, g: 0, b: 0, a: 0}
+        TextureValue: {fileID: 0}
+    SuggestedSemanticKey: qrp.unlit._testfloat
+    Status: 0

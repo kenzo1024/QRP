@@ -33,7 +33,7 @@ namespace Rendering.MatDataTransfer.Runtime
             if (existing != null)
                 return;
 
-            m_GenericProvider = new GenericMaterialParameterProvider();
+            m_GenericProvider = new GenericMaterialParameterProvider(m_GenericProviderSettings);
             Register(m_GenericProvider);
         }
     }

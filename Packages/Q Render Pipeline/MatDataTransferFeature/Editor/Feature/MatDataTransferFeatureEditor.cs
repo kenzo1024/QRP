@@ -31,8 +31,8 @@ namespace Rendering.MatDataTransfer.Editor
         private SerializedProperty m_LoggingSettings;
         private SerializedProperty m_MaxInstanceCount;
         private ReorderableList m_CatalogList;
-        private readonly List<InstanceRegisterEntry> m_InstanceEntries =
-            new List<InstanceRegisterEntry>();
+        private readonly List<MatDataTransferInstanceRegisterEntry> m_InstanceEntries =
+            new List<MatDataTransferInstanceRegisterEntry>();
 
         private void OnEnable()
         {
@@ -223,7 +223,7 @@ namespace Rendering.MatDataTransfer.Editor
             return Mathf.Ceil(width + RegistryIdColumnPadding);
         }
 
-        private static void DrawRegistryEntry(InstanceRegisterEntry entry, float idColumnWidth)
+        private static void DrawRegistryEntry(MatDataTransferInstanceRegisterEntry entry, float idColumnWidth)
         {
             Rect row = InspectorStyleLibrary.GetIndentedControlRectLayout();
             GUIStyle style = InspectorStyleLibrary.Description;

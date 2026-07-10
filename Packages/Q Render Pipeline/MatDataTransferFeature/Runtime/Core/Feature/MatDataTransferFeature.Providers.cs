@@ -25,10 +25,47 @@ namespace Rendering.MatDataTransfer.Runtime
                 : null;
         }
 
-        private void SubmitRequests(MaterialWriteContext context)
+        private bool HasProvider(string providerName)
+        {
+            return GetProvider(providerName) != null;
+        }
+
+        private void SubmitRequests(ParamRequestContext context)
         {
             for (int i = 0; i < m_Providers.Count; i++)
                 m_Providers[i].SubmitRequests(context);
+        }
+
+        private bool TrySubmitRequest(string providerName, ref ParamTransferPayload payload)
+        {
+            IMatDataTransferRequestProvider provider = GetProvider(providerName);
+            if (provider == null)
+            {
+                MatDataTransferLogging.AppendSubmitStep(
+                    ref payload,
+                    ParamSubmitStep.Rejected(
+                        "Submit.Queue",
+                        ParamWriteResultCode.ProviderUnavailable,
+                        "Request provider is unavailable."));
+                return false;
+            }
+
+            return provider.TrySubmit(ref payload);
+        }
+
+        private void ClearQueuedRequests()
+        {
+            for (int i = 0; i < m_Providers.Count; i++)
+                m_Providers[i].ClearRequests();
+        }
+
+        private void ClearRequestsForInstance(MatDataTransferInstance instance)
+        {
+            if (instance == null)
+                return;
+
+            for (int i = 0; i < m_Providers.Count; i++)
+                m_Providers[i].TryClearRequests(instance);
         }
 
         private void DisposeProviders()
@@ -58,5 +95,15 @@ namespace Rendering.MatDataTransfer.Runtime
 
         partial void RegisterBuiltInProviders();
         partial void OnProvidersDisposed();
+
+        internal bool TrySubmitRequestToProvider(string providerName, ref ParamTransferPayload payload)
+        {
+            return TrySubmitRequest(providerName, ref payload);
+        }
+
+        internal bool HasRequestProvider(string providerName)
+        {
+            return HasProvider(providerName);
+        }
     }
 }

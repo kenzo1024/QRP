@@ -34,7 +34,7 @@ namespace Rendering.MatDataTransfer.Runtime
     public struct ParamWriteResult
     {
         public ParamRequestIdentity Identity;
-        public ResolvedMaterialBinding Binding;
+        public ParamBindingResolution Binding;
         public ParamWriteConfig WriteConfig;
         public ParamWriteMethod WriteMethod;
         public ParamSubmitStep Step;
@@ -47,7 +47,7 @@ namespace Rendering.MatDataTransfer.Runtime
 
         internal static ParamWriteResult FromPayload(
             ParamTransferPayload payload,
-            ResolvedMaterialBinding binding,
+            ParamBindingResolution binding,
             ParamWriteMethod writeMethod,
             ParamSubmitStep step)
         {

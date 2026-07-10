@@ -15,12 +15,22 @@ namespace Rendering.MatDataTransfer.Editor
 
         public static void SyncCatalog(ShaderPropertyCatalog catalog, Shader shader)
         {
+            SyncCatalog(catalog, shader, null);
+        }
+
+        public static void SyncCatalog(
+            ShaderPropertyCatalog catalog,
+            Shader shader,
+            MaterialSemanticKeyProfile semanticKeyProfile)
+        {
             if (catalog == null || shader == null)
                 return;
 
             List<ShaderPropertyInfo> shaderProperties = ExtractShaderProperties(shader);
+            List<string> warnings = new List<string>();
             catalog.SetShader(shader);
-            catalog.UpdateFromShader(shaderProperties);
+            catalog.UpdateFromShader(shaderProperties, semanticKeyProfile, warnings);
+            LogWarnings(warnings);
             EditorUtility.SetDirty(catalog);
         }
 
@@ -139,6 +149,18 @@ namespace Rendering.MatDataTransfer.Editor
                 return string.Empty;
 
             return attribute.Substring(start + 1, end - start - 1).Trim();
+        }
+
+        private static void LogWarnings(List<string> warnings)
+        {
+            if (warnings == null)
+                return;
+
+            for (int i = 0; i < warnings.Count; i++)
+            {
+                if (!string.IsNullOrEmpty(warnings[i]))
+                    Debug.LogWarning("[MatDataTransfer] " + warnings[i]);
+            }
         }
     }
 }

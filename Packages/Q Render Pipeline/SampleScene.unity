@@ -315,7 +315,7 @@ PrefabInstance:
     - target: {fileID: 2938447656347583466, guid: 19a7c548bfc05e74eb0c894c797b8355, type: 3}
       propertyPath: 'm_Materials.Array.data[1]'
       value: 
-      objectReference: {fileID: 2100000, guid: e8038d43c17da2a4ea8fbbc74fb37c62, type: 2}
+      objectReference: {fileID: 2100000, guid: 1547e3b854499b444b88143b8b783fb8, type: 2}
     - target: {fileID: 2938447656347583466, guid: 19a7c548bfc05e74eb0c894c797b8355, type: 3}
       propertyPath: 'm_Materials.Array.data[2]'
       value: 
@@ -366,11 +366,11 @@ MonoBehaviour:
     MaterialTraceId: SkinnedMeshRenderer:LailaiR21M11_face[1]|slot:0|mat:QRP_Unlit
   - Renderer: {fileID: 522603739}
     MaterialSlot: 1
-    ShaderName: QRP/Unlit
-    MaterialName: QRP_Unlit
-    MaterialId: 74284
+    ShaderName: QRP/Lit
+    MaterialName: QRP_Lit
+    MaterialId: 74852
     RendererPathId: 'SkinnedMeshRenderer:LailaiR21M11_face[1]'
-    MaterialTraceId: SkinnedMeshRenderer:LailaiR21M11_face[1]|slot:1|mat:QRP_Unlit
+    MaterialTraceId: SkinnedMeshRenderer:LailaiR21M11_face[1]|slot:1|mat:QRP_Lit
   - Renderer: {fileID: 522603739}
     MaterialSlot: 2
     ShaderName: QRP/Unlit
@@ -767,7 +767,7 @@ GameObject:
   - component: {fileID: 1982470420}
   - component: {fileID: 1982470421}
   m_Layer: 0
-  m_Name: GameObject
+  m_Name: Test
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -803,25 +803,25 @@ MonoBehaviour:
   targetInstance: {fileID: 522603740}
   targetRenderer: {fileID: 522603739}
   materialSlot: 0
-  semanticKey: qrp.unlit._basecolor
+  semanticKey: common._basecolor
   priority: 0
   testValue:
     Type: 1
     FloatValue: 0
     VectorValue: {x: 0, y: 0, z: 0, w: 0}
-    ColorValue: {r: 0.32021642, g: 0.703504, b: 0.264525, a: 1}
+    ColorValue: {r: 0.60247153, g: 0.9299191, b: 0.54516816, a: 1}
     TextureValue: {fileID: 0}
-  lastSubmitSuccess: 0
+  lastSubmitSuccess: 1
   resolvedTargetMessage: QRP/Unlit | slot 0 | QRP_Unlit
-  statusMessage: 'InstanceMissing: Target instance is not registered by MatDataTransferFeature.'
+  statusMessage: 'Batch submit: 3 accepted, 0 rejected, 4 skipped.'
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
   m_Roots:
   - {fileID: 145696467}
   - {fileID: 1543933934}
-  - {fileID: 1982470420}
   - {fileID: 1972471742}
   - {fileID: 1500542351}
   - {fileID: 1412369003}
   - {fileID: 522603736}
+  - {fileID: 1982470420}

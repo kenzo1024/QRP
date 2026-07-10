@@ -92,7 +92,7 @@ namespace Rendering.MatDataTransfer.Runtime
 
         internal static void CaptureWriteSnapshot(
             ref ParamTransferPayload payload,
-            MaterialWriteCommand command,
+            ParamWriteCommand command,
             ParamWriteMethod writeMethod)
         {
             Instance.CaptureSubmitSnapshotInternal(
@@ -105,7 +105,7 @@ namespace Rendering.MatDataTransfer.Runtime
 
         internal static void CaptureResolvedSnapshot(
             ref ParamTransferPayload payload,
-            ResolvedMaterialBinding binding,
+            ParamBindingResolution binding,
             ParamSubmitStep step,
             string gameObjectPath,
             Renderer renderer)
@@ -131,7 +131,7 @@ namespace Rendering.MatDataTransfer.Runtime
 
         private void CaptureSubmitSnapshotInternal(
             ref ParamTransferPayload payload,
-            ResolvedMaterialBinding binding,
+            ParamBindingResolution binding,
             ParamWriteMethod writeMethod,
             string gameObjectPath,
             string rendererPath)
@@ -157,7 +157,7 @@ namespace Rendering.MatDataTransfer.Runtime
 
         private void CaptureResolvedSnapshotInternal(
             ref ParamTransferPayload payload,
-            ResolvedMaterialBinding binding,
+            ParamBindingResolution binding,
             ParamSubmitStep step,
             string gameObjectPath,
             string rendererPath)
@@ -342,7 +342,7 @@ namespace Rendering.MatDataTransfer.Runtime
 
         private void RecordResult(
             ParamTransferPayload payload,
-            ResolvedMaterialBinding binding,
+            ParamBindingResolution binding,
             ParamWriteMethod writeMethod,
             ParamSubmitTrace submitTrace,
             string gameObjectPath,
@@ -391,7 +391,7 @@ namespace Rendering.MatDataTransfer.Runtime
 
         private static string BuildDisplayName(
             ParamTransferPayload payload,
-            ResolvedMaterialBinding binding)
+            ParamBindingResolution binding)
         {
             string semanticKey = !string.IsNullOrEmpty(binding.MatchedSemanticKey)
                 ? binding.MatchedSemanticKey

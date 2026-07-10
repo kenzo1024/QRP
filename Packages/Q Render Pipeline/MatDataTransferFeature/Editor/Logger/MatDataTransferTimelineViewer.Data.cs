@@ -342,7 +342,7 @@ namespace Rendering.MatDataTransfer.Editor
                 RendererPath = Safe(line.RendererPath),
                 ProviderName = line.ProviderName,
                 Identity = CreateIdentityFromLogLine(line),
-                Binding = new ResolvedMaterialBinding(
+                Binding = new ParamBindingResolution(
                     line.MatchedSemanticKey,
                     line.ShaderName,
                     line.CatalogName,

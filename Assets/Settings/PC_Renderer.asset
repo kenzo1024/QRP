@@ -25,8 +25,8 @@ MonoBehaviour:
     probeSamplingDebugTexture: {fileID: 0}
     probeVolumeBlendStatesCS: {fileID: 0}
   m_RendererFeatures:
-  - {fileID: 842996928904478116}
-  m_RendererFeatureMap: a4bd188e3dedb20b
+  - {fileID: 416954748666672498}
+  m_RendererFeatureMap: 7275b0812252c905
   m_UseNativeRenderPass: 0
   xrSystemData: {fileID: 0}
   postProcessData: {fileID: 11400000, guid: 41439944d30ece34e96484bdb6645b55, type: 2}
@@ -55,7 +55,7 @@ MonoBehaviour:
   m_DepthTextureFormat: 0
   m_AccurateGbufferNormals: 0
   m_IntermediateTextureMode: 0
---- !u!114 &842996928904478116
+--- !u!114 &416954748666672498
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -68,11 +68,13 @@ MonoBehaviour:
   m_Name: MatDataTransferFeature
   m_EditorClassIdentifier: REP.MatDataTransfer.Runtime::Rendering.MatDataTransfer.Runtime.MatDataTransferFeature
   m_Active: 1
-  m_Catalogs: []
+  m_Catalogs:
+  - {fileID: 11400000, guid: 6a1a926fc6f8dde4fbcf7bf86c0713a1, type: 2}
+  - {fileID: 11400000, guid: ac899ca6127493845976ec24e89a4cb2, type: 2}
   m_GenericProviderSettings:
     Enabled: 1
   m_LoggingSettings:
-    EnableLogging: 0
+    EnableLogging: 1
     AllowReleaseFileLogging: 0
     MaxTimelineFrames: 128
   m_MaxInstanceCount: 256

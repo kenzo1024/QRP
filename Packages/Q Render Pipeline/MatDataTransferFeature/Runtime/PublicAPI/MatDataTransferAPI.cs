@@ -8,6 +8,25 @@ namespace Rendering.MatDataTransfer.Runtime
             MatDataTransferInstance target,
             string semanticKey,
             ParamValue value,
+            ParamSubmitScope scope,
+            MatDataTransferSubmitSource source,
+            ParamWriteLayer layer,
+            int priority = 0)
+        {
+            return MaterialParameterSubmitter.Submit(
+                target,
+                semanticKey,
+                value,
+                scope,
+                source,
+                layer,
+                priority);
+        }
+
+        public static ParamSubmitTrace Submit(
+            MatDataTransferInstance target,
+            string semanticKey,
+            ParamValue value,
             RendererMaterialBinding binding,
             MatDataTransferSubmitSource source,
             ParamWriteLayer layer,
@@ -39,6 +58,42 @@ namespace Rendering.MatDataTransfer.Runtime
                 value,
                 targetRenderer,
                 materialSlot,
+                source,
+                layer,
+                priority);
+        }
+
+        public static ParamSubmitTrace ForInstance(
+            MatDataTransferInstance target,
+            string semanticKey,
+            ParamValue value,
+            MatDataTransferSubmitSource source,
+            ParamWriteLayer layer,
+            int priority = 0)
+        {
+            return MaterialParameterSubmitter.ForInstance(
+                target,
+                semanticKey,
+                value,
+                source,
+                layer,
+                priority);
+        }
+
+        public static ParamSubmitTrace ForShader(
+            MatDataTransferInstance target,
+            string shaderName,
+            string semanticKey,
+            ParamValue value,
+            MatDataTransferSubmitSource source,
+            ParamWriteLayer layer,
+            int priority = 0)
+        {
+            return MaterialParameterSubmitter.ForShader(
+                target,
+                shaderName,
+                semanticKey,
+                value,
                 source,
                 layer,
                 priority);

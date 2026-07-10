@@ -213,27 +213,42 @@ namespace Rendering.MatDataTransfer.Runtime
 
         internal bool MergeCatalogsFromEditor(IReadOnlyList<ShaderPropertyCatalog> catalogs)
         {
-            if (catalogs == null || catalogs.Count == 0)
-                return false;
-
             if (m_Catalogs == null)
                 m_Catalogs = new List<ShaderPropertyCatalog>();
 
-            bool changed = false;
-            for (int i = 0; i < catalogs.Count; i++)
+            bool changed = RemoveEmptyCatalogSlots();
+            if (catalogs != null)
             {
-                ShaderPropertyCatalog catalog = catalogs[i];
-                if (catalog == null || m_Catalogs.Contains(catalog))
-                    continue;
+                for (int i = 0; i < catalogs.Count; i++)
+                {
+                    ShaderPropertyCatalog catalog = catalogs[i];
+                    if (catalog == null || m_Catalogs.Contains(catalog))
+                        continue;
 
-                m_Catalogs.Add(catalog);
-                changed = true;
+                    m_Catalogs.Add(catalog);
+                    changed = true;
+                }
             }
 
             if (changed)
                 RefreshCatalogCaches();
 
             return changed;
+        }
+
+        private bool RemoveEmptyCatalogSlots()
+        {
+            bool removed = false;
+            for (int i = m_Catalogs.Count - 1; i >= 0; i--)
+            {
+                if (m_Catalogs[i] != null)
+                    continue;
+
+                m_Catalogs.RemoveAt(i);
+                removed = true;
+            }
+
+            return removed;
         }
 #endif
 

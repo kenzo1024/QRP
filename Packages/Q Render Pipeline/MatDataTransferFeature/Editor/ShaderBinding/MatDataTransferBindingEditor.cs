@@ -21,6 +21,7 @@ namespace Rendering.MatDataTransfer.Editor
         private float m_SidebarWidth = DefaultSidebarWidth;
         private ShaderPropertyCatalog m_Catalog;
         private Shader m_Shader;
+        private MaterialSemanticKeyProfile m_SemanticKeyProfile;
         private SerializedObject m_CatalogObject;
         private Vector2 m_ListScroll;
         private Vector2 m_DetailScroll;
@@ -95,6 +96,18 @@ namespace Rendering.MatDataTransfer.Editor
                 {
                     AssignCreatedCatalog();
                 }
+            }
+
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                EditorGUILayout.LabelField("Profile", InspectorStyleLibrary.ParameterName, GUILayout.Width(60));
+                m_SemanticKeyProfile = (MaterialSemanticKeyProfile)EditorGUILayout.ObjectField(
+                    m_SemanticKeyProfile,
+                    typeof(MaterialSemanticKeyProfile),
+                    false);
+
+                if (GUILayout.Button("Create Profile", GUILayout.Width(120)))
+                    AssignCreatedSemanticProfile();
             }
         }
 
@@ -368,6 +381,8 @@ namespace Rendering.MatDataTransfer.Editor
             EditorGUILayout.HelpBox(
                 "Semantic Key is the unique identifier used by business code to reference this property.",
                 MessageType.None);
+
+            DrawSemanticProfilePreview(propertyInfo);
         }
 
         private void ClearMissingProperties(SerializedProperty list)
@@ -399,7 +414,7 @@ namespace Rendering.MatDataTransfer.Editor
                 return;
             }
 
-            ShaderPropertyCatalogBuilder.SyncCatalog(m_Catalog, m_Shader);
+            ShaderPropertyCatalogBuilder.SyncCatalog(m_Catalog, m_Shader, m_SemanticKeyProfile);
             m_CatalogObject = null;
             EditorUtility.SetDirty(m_Catalog);
             AssetDatabase.SaveAssets();
@@ -500,6 +515,16 @@ namespace Rendering.MatDataTransfer.Editor
             ResetCatalogEditorState();
         }
 
+        private void AssignCreatedSemanticProfile()
+        {
+            MaterialSemanticKeyProfile createdProfile = CreateSemanticProfile();
+            if (createdProfile == null)
+                return;
+
+            m_SemanticKeyProfile = createdProfile;
+            EditorGUIUtility.PingObject(createdProfile);
+        }
+
         private void ResetCatalogEditorState()
         {
             m_CatalogObject = null;
@@ -543,10 +568,29 @@ namespace Rendering.MatDataTransfer.Editor
         {
             string defaultAssetName = BuildDefaultCatalogAssetName(shaderName);
             ShaderPropertyCatalog catalog = ScriptableObject.CreateInstance<ShaderPropertyCatalog>();
-            string path = BuildUniqueConfigAssetPath(defaultAssetName);
-            AssetDatabase.CreateAsset(catalog, path);
+            string path = BuildConfigAssetPath(defaultAssetName);
+            catalog = CreateOrReplaceAsset(catalog, path);
             AssetDatabase.SaveAssets();
             return catalog;
+        }
+
+        private MaterialSemanticKeyProfile CreateSemanticProfile()
+        {
+            MaterialSemanticKeyProfile profile = ScriptableObject.CreateInstance<MaterialSemanticKeyProfile>();
+            string path = BuildConfigAssetPath(BuildDefaultProfileAssetName());
+            profile = CreateOrReplaceAsset(profile, path);
+            AssetDatabase.SaveAssets();
+            return profile;
+        }
+
+        private string BuildConfigAssetPath(string assetName)
+        {
+            string folderPath = EnsureDefaultConfigFolder();
+            string safeAssetName = SanitizeAssetFileName(assetName);
+            if (string.IsNullOrEmpty(safeAssetName))
+                safeAssetName = "MatDataTransferAsset";
+
+            return folderPath + "/" + safeAssetName + ".asset";
         }
 
         private string BuildUniqueConfigAssetPath(string assetName)
@@ -558,6 +602,28 @@ namespace Rendering.MatDataTransfer.Editor
 
             string path = folderPath + "/" + safeAssetName + ".asset";
             return AssetDatabase.GenerateUniqueAssetPath(path);
+        }
+
+        private static T CreateOrReplaceAsset<T>(T asset, string path)
+            where T : ScriptableObject
+        {
+            if (asset == null || string.IsNullOrEmpty(path))
+                return asset;
+
+            T existingAsset = AssetDatabase.LoadAssetAtPath<T>(path);
+            if (existingAsset != null)
+            {
+                EditorUtility.CopySerialized(asset, existingAsset);
+                EditorUtility.SetDirty(existingAsset);
+                Object.DestroyImmediate(asset);
+                return existingAsset;
+            }
+
+            if (AssetDatabase.LoadAssetAtPath<Object>(path) != null)
+                AssetDatabase.DeleteAsset(path);
+
+            AssetDatabase.CreateAsset(asset, path);
+            return asset;
         }
 
         private string EnsureDefaultConfigFolder()
@@ -624,6 +690,48 @@ namespace Rendering.MatDataTransfer.Editor
             return string.IsNullOrEmpty(shaderFileName)
                 ? "ShaderPropertyCatalog"
                 : shaderFileName + "_ShaderPropertyCatalog";
+        }
+
+        private static string BuildDefaultProfileAssetName()
+        {
+            return "MaterialSemanticKeyProfile";
+        }
+
+        private void DrawSemanticProfilePreview(SerializedProperty propertyInfo)
+        {
+            if (m_SemanticKeyProfile == null || propertyInfo == null)
+                return;
+
+            ShaderPropertyInfo info = new ShaderPropertyInfo
+            {
+                PropertyName = GetString(propertyInfo, "PropertyName"),
+                InspectorDisplayName = GetString(propertyInfo, "InspectorDisplayName"),
+                ValueType = GetParamValueType(propertyInfo)
+            };
+
+            List<string> warnings = new List<string>();
+            bool matched = m_SemanticKeyProfile.TryResolveSemanticKey(
+                GetSelectedShaderName(),
+                info,
+                out string semanticKey,
+                warnings);
+
+            EditorGUILayout.Space(8);
+            InspectorStyleLibrary.DrawParameterValue(
+                "Profile Match",
+                matched ? semanticKey : "<none>");
+
+            for (int i = 0; i < warnings.Count; i++)
+                EditorGUILayout.HelpBox(warnings[i], MessageType.Warning);
+        }
+
+        private static ParamValueType GetParamValueType(SerializedProperty propertyInfo)
+        {
+            SerializedProperty valueType = propertyInfo.FindPropertyRelative("ValueType");
+            if (valueType == null)
+                return ParamValueType.Float;
+
+            return (ParamValueType)valueType.enumValueIndex;
         }
 
         private static string SanitizeAssetFileName(string value)

@@ -8,26 +8,18 @@ namespace Rendering.MatDataTransfer.Runtime
         private readonly List<ParamTransferPayload> m_FramePayloads =
             new List<ParamTransferPayload>();
 
-        private MaterialWriteContext m_WriteContext;
-        private MatDataTransferResolver m_Resolver;
+        private ParamRequestContext m_RequestContext;
+        private MaterialParameterResolver m_Resolver;
+        private MaterialParameterWriter m_Writer;
         private bool m_GenericProviderWasEnabled;
         private string m_LastNotReadyReason;
-
-        private static void ClearQueuedRequests()
-        {
-            GenericMaterialParameterProvider.ClearAllRequests();
-        }
-
-        private static void ClearRequestsForInstance(MatDataTransferInstance instance)
-        {
-            GenericMaterialParameterProvider.TryClearQueuedRequests(instance);
-        }
 
         private void InitializeRequestPipeline()
         {
             m_FramePayloads.Clear();
-            m_WriteContext = new MaterialWriteContext(this, m_FramePayloads);
-            m_Resolver = new MatDataTransferResolver();
+            m_RequestContext = new ParamRequestContext(m_FramePayloads);
+            m_Resolver = new MaterialParameterResolver();
+            m_Writer = new MaterialParameterWriter();
             m_GenericProviderWasEnabled = IsGenericMaterialParameterProviderEnabled;
             m_LastNotReadyReason = null;
         }
@@ -52,15 +44,15 @@ namespace Rendering.MatDataTransfer.Runtime
                     return;
 
                 SyncLiveInstances();
-                m_WriteContext.BeginFrame();
-                SubmitRequests(m_WriteContext);
+                m_RequestContext.BeginFrame();
+                SubmitRequests(m_RequestContext);
 
                 if (m_FramePayloads.Count == 0)
                     return;
 
-                IReadOnlyList<MaterialWriteCommand> commands = m_Resolver.Resolve(
+                IReadOnlyList<ParamWriteCommand> commands = m_Resolver.Resolve(
                     Catalogs,
-                    InstanceRegister,
+                    MatDataTransferInstanceRegister,
                     m_FramePayloads);
 
                 ApplyWriteCommands(commands);
@@ -79,21 +71,27 @@ namespace Rendering.MatDataTransfer.Runtime
                 return false;
             }
 
-            if (InstanceRegister == null)
+            if (MatDataTransferInstanceRegister == null)
             {
                 notReadyReason = "Request pipeline is not ready: instance id registry is missing.";
                 return false;
             }
 
-            if (m_WriteContext == null)
+            if (m_RequestContext == null)
             {
-                notReadyReason = "Request pipeline is not ready: write context is missing.";
+                notReadyReason = "Request pipeline is not ready: request context is missing.";
                 return false;
             }
 
             if (m_Resolver == null)
             {
                 notReadyReason = "Request pipeline is not ready: request resolver is missing.";
+                return false;
+            }
+
+            if (m_Writer == null)
+            {
+                notReadyReason = "Request pipeline is not ready: material parameter writer is missing.";
                 return false;
             }
 
@@ -110,8 +108,10 @@ namespace Rendering.MatDataTransfer.Runtime
         private void DisposeRequestPipeline()
         {
             m_FramePayloads.Clear();
-            m_WriteContext = null;
+            ClearWrittenState();
+            m_RequestContext = null;
             m_Resolver = null;
+            m_Writer = null;
             m_GenericProviderWasEnabled = false;
             m_LastNotReadyReason = null;
         }
@@ -154,9 +154,5 @@ namespace Rendering.MatDataTransfer.Runtime
             MatDataTransferLogger.LogError(reason);
         }
 
-        internal IMatDataTransferRequestProvider GetRequestProvider(string providerName)
-        {
-            return GetProvider(providerName);
-        }
     }
 }

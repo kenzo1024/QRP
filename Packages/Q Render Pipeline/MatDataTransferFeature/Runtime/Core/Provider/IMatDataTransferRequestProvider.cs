@@ -3,6 +3,9 @@ namespace Rendering.MatDataTransfer.Runtime
     internal interface IMatDataTransferRequestProvider : System.IDisposable
     {
         string Name { get; }
-        void SubmitRequests(MaterialWriteContext context);
+        bool TrySubmit(ref ParamTransferPayload payload);
+        bool TryClearRequests(MatDataTransferInstance instance);
+        void ClearRequests();
+        void SubmitRequests(ParamRequestContext context);
     }
 }

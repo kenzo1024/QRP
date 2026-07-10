@@ -52,6 +52,14 @@ namespace Rendering.MatDataTransfer.Runtime
 
         public void UpdateFromShader(List<ShaderPropertyInfo> shaderProperties)
         {
+            UpdateFromShader(shaderProperties, null, null);
+        }
+
+        public void UpdateFromShader(
+            List<ShaderPropertyInfo> shaderProperties,
+            MaterialSemanticKeyProfile semanticKeyProfile,
+            List<string> warnings = null)
+        {
             if (shaderProperties == null)
                 return;
 
@@ -64,7 +72,7 @@ namespace Rendering.MatDataTransfer.Runtime
                     continue;
 
                 string propertyName = info.PropertyName;
-                string semanticKey = GenerateSemanticKey(info, shaderName);
+                string semanticKey = ResolveSemanticKey(info, semanticKeyProfile, warnings);
                 incomingPropertyNames.Add(propertyName);
 
                 CatalogProperty existing = FindByPropertyName(propertyName);
@@ -165,6 +173,21 @@ namespace Rendering.MatDataTransfer.Runtime
             return string.IsNullOrWhiteSpace(value)
                 ? string.Empty
                 : value.Trim().ToLowerInvariant();
+        }
+
+        private string ResolveSemanticKey(
+            ShaderPropertyInfo info,
+            MaterialSemanticKeyProfile semanticKeyProfile,
+            List<string> warnings)
+        {
+            string defaultKey = GenerateSemanticKey(info, shaderName);
+            if (semanticKeyProfile != null &&
+                semanticKeyProfile.TryResolveSemanticKey(shaderName, info, out string semanticKey, warnings))
+            {
+                return semanticKey;
+            }
+
+            return defaultKey;
         }
 
         private static string GenerateSemanticKey(ShaderPropertyInfo info, string shaderName)

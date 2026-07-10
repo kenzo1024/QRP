@@ -34,15 +34,24 @@ namespace Rendering.MatDataTransfer.Runtime
 
         private void SubmitTestParameters()
         {
-            ParamSubmitTrace result = MatDataTransferAPI.ForMaterial(
+            // ParamSubmitTrace result = MatDataTransferAPI.ForMaterial(
+            //     targetInstance,
+            //     semanticKey,
+            //     testValue,
+            //     targetRenderer,
+            //     materialSlot,
+            //     MatDataTransferSubmitSource.From(this, SourceLabel),
+            //     ParamWriteLayer.Gameplay,
+            //     priority);
+
+            ParamSubmitTrace result = MatDataTransferAPI.ForInstance(
                 targetInstance,
                 semanticKey,
                 testValue,
-                targetRenderer,
-                materialSlot,
                 MatDataTransferSubmitSource.From(this, SourceLabel),
                 ParamWriteLayer.Gameplay,
-                priority);
+                priority
+            );
 
             lastSubmitSuccess = result.IsAccepted;
             statusMessage = result.ToString();

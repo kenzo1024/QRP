@@ -220,13 +220,22 @@ namespace Rendering.MatDataTransfer.Runtime
     {
         public readonly List<ParamSubmitStep> Steps =
             new List<ParamSubmitStep>();
+        public readonly List<ParamSubmitTrace> Children =
+            new List<ParamSubmitTrace>();
 
         public ParamSubmitStep Current => Steps.Count > 0 ? Steps[Steps.Count - 1] : null;
-        public bool IsAccepted => Current != null && Current.IsAccepted;
-        public bool IsApplied => Current != null && Current.IsApplied;
+        public bool IsBatch => IsBatchRoot || Children.Count > 0 || SkippedCount > 0;
+        public bool IsAccepted => IsBatch ? AcceptedCount > 0 : Current != null && Current.IsAccepted;
+        public bool IsApplied => IsBatch ? AppliedCount > 0 : Current != null && Current.IsApplied;
         public ParamWriteStatus Status => Current != null ? Current.Status : ParamWriteStatus.Submitted;
         public ParamWriteResultCode Code => Current != null ? Current.Code : ParamWriteResultCode.None;
         public string Message => Current != null ? Current.Message : string.Empty;
+        public bool IsBatchRoot { get; private set; }
+        public int SkippedCount { get; private set; }
+        public int TotalCount => IsBatch ? Children.Count + SkippedCount : 1;
+        public int AcceptedCount => CountChildren(true, false);
+        public int AppliedCount => CountChildren(false, true);
+        public int RejectedCount => IsBatch ? CountRejectedChildren() : (Current != null && !IsAccepted ? 1 : 0);
 
         public void AddStep(ParamSubmitStep step)
         {
@@ -234,12 +243,65 @@ namespace Rendering.MatDataTransfer.Runtime
                 Steps.Add(step);
         }
 
+        public void AddChild(ParamSubmitTrace trace)
+        {
+            if (trace != null)
+                Children.Add(trace);
+        }
+
+        public void MarkBatchRoot()
+        {
+            IsBatchRoot = true;
+        }
+
+        public void AddSkipped(int count = 1)
+        {
+            if (count > 0)
+                SkippedCount += count;
+        }
+
         public override string ToString()
         {
+            if (IsBatch)
+            {
+                return $"Batch submit: {AcceptedCount} accepted, {RejectedCount} rejected, {SkippedCount} skipped.";
+            }
+
             if (IsAccepted)
                 return string.IsNullOrEmpty(Message) ? "Submit accepted." : Message;
 
             return $"{Code}: {Message}";
+        }
+
+        private int CountChildren(bool accepted, bool applied)
+        {
+            int count = 0;
+            for (int i = 0; i < Children.Count; i++)
+            {
+                ParamSubmitTrace child = Children[i];
+                if (child == null)
+                    continue;
+
+                if (accepted && child.IsAccepted)
+                    count++;
+                else if (applied && child.IsApplied)
+                    count++;
+            }
+
+            return count;
+        }
+
+        private int CountRejectedChildren()
+        {
+            int count = 0;
+            for (int i = 0; i < Children.Count; i++)
+            {
+                ParamSubmitTrace child = Children[i];
+                if (child != null && !child.IsAccepted)
+                    count++;
+            }
+
+            return count;
         }
     }
 }

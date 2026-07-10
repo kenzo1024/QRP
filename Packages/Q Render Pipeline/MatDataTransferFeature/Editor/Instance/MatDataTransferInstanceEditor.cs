@@ -26,10 +26,12 @@ namespace Rendering.MatDataTransfer.Editor
         private const float MetaKeyPropertyColumnRatio = 1f / 6f;
 
         private static bool s_ShowInstanceInfo = true;
-        private static bool s_ShowBindings;
+        private static bool s_ShowBindings = true;
         private static bool s_ShowCatalogKeys = true;
         private static bool s_ShowDebugInfo = true;
         private static readonly Dictionary<string, bool> s_ShaderBindingFoldouts =
+            new Dictionary<string, bool>();
+        private static readonly Dictionary<string, bool> s_CatalogEntryFoldouts =
             new Dictionary<string, bool>();
         private static readonly Dictionary<string, bool> s_CatalogKeyPropertyFoldouts =
             new Dictionary<string, bool>();
@@ -175,61 +177,58 @@ namespace Rendering.MatDataTransfer.Editor
         {
             if (!feature.TryGetCatalogForShader(shaderName, out ShaderPropertyCatalog catalog))
             {
-                DrawMissingCatalog(shaderName, bindingCount);
+                string foldoutKey = BuildCatalogEntryFoldoutKey(shaderName, null);
+                if (DrawCatalogEntryFoldout(foldoutKey, shaderName, BuildMissingCatalogSummary(bindingCount)))
+                    DrawMissingCatalogDetails();
+
                 EditorGUILayout.Space(2);
                 return;
             }
 
-            DrawCatalogHeader(shaderName, catalog, bindingCount);
+            string catalogFoldoutKey = BuildCatalogEntryFoldoutKey(shaderName, catalog);
+            if (!DrawCatalogEntryFoldout(catalogFoldoutKey, shaderName, BuildCatalogSummary(catalog, bindingCount)))
+            {
+                EditorGUILayout.Space(2);
+                return;
+            }
+
             DrawCatalogFileInfo(catalog);
             DrawCatalogPropertyRows(catalog);
             EditorGUILayout.Space(2);
         }
 
-        private void DrawMissingCatalog(string shaderName, int bindingCount)
+        private bool DrawCatalogEntryFoldout(
+            string foldoutKey,
+            string shaderName,
+            string summary)
         {
-            Rect row = EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight);
-            Rect rect = EditorGUI.IndentedRect(row);
-            Rect countRect = new Rect(
-                rect.xMax - CountLabelWidth,
-                rect.y,
-                CountLabelWidth,
-                rect.height);
-            Rect shaderRect = new Rect(
-                rect.x,
-                rect.y,
-                Mathf.Max(0f, rect.width - CountLabelWidth - RowGap),
-                rect.height);
+            bool expanded = GetFoldoutState(s_CatalogEntryFoldouts, foldoutKey, true);
+            expanded = InspectorStyleLibrary.DrawFoldoutLayout(
+                expanded,
+                shaderName,
+                summary,
+                true,
+                InnerFoldoutLeftPadding);
+            SetFoldoutState(s_CatalogEntryFoldouts, foldoutKey, expanded);
+            return expanded;
+        }
 
-            InspectorStyleLibrary.DrawTailLabel(shaderRect, shaderName, InspectorStyleLibrary.Title, true);
-            GUI.Label(countRect, bindingCount + " slot(s), catalog missing", InspectorStyleLibrary.RightAlignedDescription);
-
+        private void DrawMissingCatalogDetails()
+        {
             EditorGUI.indentLevel++;
             InspectorStyleLibrary.DrawDescription("No catalog in current feature for this shader.");
             EditorGUI.indentLevel--;
         }
 
-        private void DrawCatalogHeader(
-            string shaderName,
-            ShaderPropertyCatalog catalog,
-            int bindingCount)
+        private static string BuildCatalogSummary(ShaderPropertyCatalog catalog, int bindingCount)
         {
             int keyCount = catalog != null && catalog.Properties != null ? catalog.Properties.Count : 0;
-            Rect row = EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight);
-            Rect rect = EditorGUI.IndentedRect(row);
-            Rect countRect = new Rect(
-                rect.xMax - CountLabelWidth,
-                rect.y,
-                CountLabelWidth,
-                rect.height);
-            Rect shaderRect = new Rect(
-                rect.x,
-                rect.y,
-                Mathf.Max(0f, rect.width - CountLabelWidth - RowGap),
-                rect.height);
+            return bindingCount + " slot(s), " + keyCount + " key(s)";
+        }
 
-            InspectorStyleLibrary.DrawTailLabel(shaderRect, shaderName, InspectorStyleLibrary.Title, true);
-            GUI.Label(countRect, bindingCount + " slot(s), " + keyCount + " key(s)", InspectorStyleLibrary.RightAlignedDescription);
+        private static string BuildMissingCatalogSummary(int bindingCount)
+        {
+            return bindingCount + " slot(s), catalog missing";
         }
 
         private void DrawCatalogFileInfo(ShaderPropertyCatalog catalog)
@@ -598,6 +597,19 @@ namespace Rendering.MatDataTransfer.Editor
         private static string BuildShaderGroupSummary(int rendererCount, int slotCount)
         {
             return rendererCount + " renderer(s), " + slotCount + " slot(s)";
+        }
+
+        private static string BuildCatalogEntryFoldoutKey(string shaderName, ShaderPropertyCatalog catalog)
+        {
+            string normalizedShaderName = shaderName ?? string.Empty;
+            if (catalog == null)
+                return "missing|" + normalizedShaderName;
+
+            string path = AssetDatabase.GetAssetPath(catalog);
+            if (!string.IsNullOrEmpty(path))
+                return "catalog|" + normalizedShaderName + "|" + path;
+
+            return "catalog|" + normalizedShaderName + "|" + catalog.GetInstanceID();
         }
 
         private static bool GetFoldoutState(

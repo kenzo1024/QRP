@@ -7,7 +7,7 @@ namespace Rendering.MatDataTransfer.Runtime
     /// 解析后的属性绑定信息（用于内部数据传递和回执）
     /// </summary>
     [Serializable]
-    public struct ResolvedMaterialBinding
+    public struct ParamBindingResolution
     {
         public string MatchedSemanticKey;
         public string ShaderName;
@@ -15,7 +15,7 @@ namespace Rendering.MatDataTransfer.Runtime
         public string PropertyName;
         public int PropertyId;
 
-        public ResolvedMaterialBinding(
+        public ParamBindingResolution(
             string matchedSemanticKey,
             string shaderName,
             string catalogName,
@@ -29,7 +29,7 @@ namespace Rendering.MatDataTransfer.Runtime
             PropertyId = propertyId;
         }
 
-        public static ResolvedMaterialBinding FromCatalog(
+        public static ParamBindingResolution FromCatalog(
             CatalogProperty property,
             string matchedSemanticKey,
             string shaderName,
@@ -37,7 +37,7 @@ namespace Rendering.MatDataTransfer.Runtime
         {
             if (property?.PropertyInfo == null)
             {
-                return new ResolvedMaterialBinding(
+                return new ParamBindingResolution(
                     matchedSemanticKey,
                     shaderName,
                     catalogName,
@@ -45,7 +45,7 @@ namespace Rendering.MatDataTransfer.Runtime
                     0);
             }
 
-            return new ResolvedMaterialBinding(
+            return new ParamBindingResolution(
                 matchedSemanticKey,
                 shaderName,
                 catalogName,

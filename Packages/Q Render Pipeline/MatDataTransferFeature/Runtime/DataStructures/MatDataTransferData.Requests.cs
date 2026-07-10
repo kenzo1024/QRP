@@ -88,18 +88,72 @@ namespace Rendering.MatDataTransfer.Runtime
         }
     }
 
-    internal readonly struct MaterialWriteCommand
+    public enum ParamSubmitScopeMode
+    {
+        Material,
+        SupportsKey,
+        Shader
+    }
+
+    public readonly struct ParamSubmitScope
+    {
+        public readonly ParamSubmitScopeMode Mode;
+        public readonly Renderer Renderer;
+        public readonly int MaterialSlot;
+        public readonly string ShaderName;
+
+        private ParamSubmitScope(
+            ParamSubmitScopeMode mode,
+            Renderer renderer,
+            int materialSlot,
+            string shaderName)
+        {
+            Mode = mode;
+            Renderer = renderer;
+            MaterialSlot = materialSlot;
+            ShaderName = shaderName ?? string.Empty;
+        }
+
+        public static ParamSubmitScope Material(Renderer renderer, int materialSlot)
+        {
+            return new ParamSubmitScope(
+                ParamSubmitScopeMode.Material,
+                renderer,
+                materialSlot,
+                string.Empty);
+        }
+
+        public static ParamSubmitScope SupportsKey()
+        {
+            return new ParamSubmitScope(
+                ParamSubmitScopeMode.SupportsKey,
+                null,
+                -1,
+                string.Empty);
+        }
+
+        public static ParamSubmitScope Shader(string shaderName)
+        {
+            return new ParamSubmitScope(
+                ParamSubmitScopeMode.Shader,
+                null,
+                -1,
+                shaderName);
+        }
+    }
+
+    internal readonly struct ParamWriteCommand
     {
         public readonly ParamTransferPayload Payload;
         public readonly CatalogProperty Property;
-        public readonly ResolvedMaterialBinding BindingResolution;
+        public readonly ParamBindingResolution BindingResolution;
         public readonly Renderer Renderer;
         public readonly string GameObjectPath;
 
-        public MaterialWriteCommand(
+        public ParamWriteCommand(
             ParamTransferPayload payload,
             CatalogProperty property,
-            ResolvedMaterialBinding bindingResolution,
+            ParamBindingResolution bindingResolution,
             Renderer renderer,
             string gameObjectPath)
         {
