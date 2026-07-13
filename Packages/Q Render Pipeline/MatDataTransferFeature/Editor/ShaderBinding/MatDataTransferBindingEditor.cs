@@ -15,6 +15,21 @@ namespace Rendering.MatDataTransfer.Editor
             public ShaderPropertyCatalog Catalog;
         }
 
+        [Serializable]
+        private sealed class PersistedWorkspace
+        {
+            public string ShaderId;
+            public string CatalogId;
+        }
+
+        [Serializable]
+        private sealed class PersistedState
+        {
+            public List<PersistedWorkspace> Workspaces = new List<PersistedWorkspace>();
+            public int SelectedWorkspaceIndex = -1;
+            public string SemanticKeyProfileId;
+        }
+
         private const float DefaultShaderPaneWidth = 280f;
         private const float DefaultPropertiesPaneWidth = 420f;
         private const float MinShaderPaneWidth = 240f;
@@ -27,6 +42,8 @@ namespace Rendering.MatDataTransfer.Editor
         private const float RowHeight = 24f;
         private const float DeleteButtonWidth = 24f;
         private const string DefaultConfigFolderName = "Configs";
+        private const string StatePreferenceKeyPrefix =
+            "Rendering.MatDataTransfer.BindingEditor.State.v1.";
 
         [SerializeField] private float m_ShaderPaneWidth = DefaultShaderPaneWidth;
         [SerializeField] private float m_PropertiesPaneWidth = DefaultPropertiesPaneWidth;
@@ -48,6 +65,11 @@ namespace Rendering.MatDataTransfer.Editor
             SplitterHitWidth * 2f +
             LayoutHorizontalPadding;
 
+        private float AvailableColumnWidth =>
+            Mathf.Max(MinimumWindowWidth, position.width) -
+            SplitterHitWidth * 2f -
+            LayoutHorizontalPadding;
+
         private ShaderWorkspace ActiveWorkspace =>
             m_SelectedWorkspaceIndex >= 0 && m_SelectedWorkspaceIndex < m_Workspaces.Count
                 ? m_Workspaces[m_SelectedWorkspaceIndex]
@@ -65,7 +87,14 @@ namespace Rendering.MatDataTransfer.Editor
 
         private void OnEnable()
         {
+            RestoreState();
             InitializeWindow(false);
+        }
+
+        private void OnDisable()
+        {
+            ApplySerializedObject();
+            SaveState();
         }
 
         private void InitializeWindow(bool resizeToMinimum)
@@ -102,10 +131,17 @@ namespace Rendering.MatDataTransfer.Editor
             using (new EditorGUILayout.HorizontalScope())
             {
                 EditorGUILayout.LabelField("Profile", InspectorStyleLibrary.ParameterName, GUILayout.Width(52f));
-                m_SemanticKeyProfile = (MaterialSemanticKeyProfile)EditorGUILayout.ObjectField(
-                    m_SemanticKeyProfile,
-                    typeof(MaterialSemanticKeyProfile),
-                    false);
+                EditorGUI.BeginChangeCheck();
+                MaterialSemanticKeyProfile semanticKeyProfile =
+                    (MaterialSemanticKeyProfile)EditorGUILayout.ObjectField(
+                        m_SemanticKeyProfile,
+                        typeof(MaterialSemanticKeyProfile),
+                        false);
+                if (EditorGUI.EndChangeCheck())
+                {
+                    m_SemanticKeyProfile = semanticKeyProfile;
+                    SaveState();
+                }
 
                 if (GUILayout.Button("Create Profile", GUILayout.Width(112f)))
                     AssignCreatedSemanticProfile();
@@ -116,14 +152,19 @@ namespace Rendering.MatDataTransfer.Editor
         {
             ClampColumnWidths();
             SerializedProperty properties = m_CatalogObject?.FindProperty("properties");
+            float detailPaneWidth = AvailableColumnWidth -
+                                    m_ShaderPaneWidth -
+                                    m_PropertiesPaneWidth;
 
-            using (new EditorGUILayout.HorizontalScope(GUILayout.ExpandHeight(true)))
+            using (new EditorGUILayout.HorizontalScope(
+                       GUILayout.ExpandWidth(true),
+                       GUILayout.ExpandHeight(true)))
             {
                 DrawShaderPane();
                 DrawSplitter(ColumnSplitter.Shaders);
                 DrawPropertiesPane(properties);
                 DrawSplitter(ColumnSplitter.Properties);
-                DrawDetailPane(properties);
+                DrawDetailPane(properties, detailPaneWidth);
             }
         }
 
@@ -444,12 +485,12 @@ namespace Rendering.MatDataTransfer.Editor
             current.Use();
         }
 
-        private void DrawDetailPane(SerializedProperty properties)
+        private void DrawDetailPane(SerializedProperty properties, float width)
         {
             using (new EditorGUILayout.VerticalScope(
                        EditorStyles.helpBox,
-                       GUILayout.MinWidth(MinDetailPaneWidth),
-                       GUILayout.ExpandWidth(true),
+                       GUILayout.Width(width),
+                       GUILayout.ExpandWidth(false),
                        GUILayout.ExpandHeight(true)))
             {
                 using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
@@ -560,14 +601,10 @@ namespace Rendering.MatDataTransfer.Editor
 
         private void ClampColumnWidths()
         {
-            float availableWidth = Mathf.Max(MinimumWindowWidth, position.width) -
-                                   SplitterHitWidth * 2f -
-                                   LayoutHorizontalPadding;
-
-            float maxShaderWidth = availableWidth - MinPropertiesPaneWidth - MinDetailPaneWidth;
+            float maxShaderWidth = AvailableColumnWidth - MinPropertiesPaneWidth - MinDetailPaneWidth;
             m_ShaderPaneWidth = Mathf.Clamp(m_ShaderPaneWidth, MinShaderPaneWidth, maxShaderWidth);
 
-            float maxPropertiesWidth = availableWidth - m_ShaderPaneWidth - MinDetailPaneWidth;
+            float maxPropertiesWidth = AvailableColumnWidth - m_ShaderPaneWidth - MinDetailPaneWidth;
             m_PropertiesPaneWidth = Mathf.Clamp(
                 m_PropertiesPaneWidth,
                 MinPropertiesPaneWidth,
@@ -636,6 +673,7 @@ namespace Rendering.MatDataTransfer.Editor
             m_Workspaces.RemoveAt(m_SelectedWorkspaceIndex);
             m_SelectedWorkspaceIndex = Mathf.Min(removedIndex, m_Workspaces.Count - 1);
             ResetCatalogEditorState();
+            SaveState();
         }
 
         private void SelectWorkspace(int index)
@@ -647,6 +685,7 @@ namespace Rendering.MatDataTransfer.Editor
             ApplySerializedObject();
             m_SelectedWorkspaceIndex = index;
             ResetCatalogEditorState();
+            SaveState();
         }
 
         private void SetActiveShader(Shader shader)
@@ -660,6 +699,7 @@ namespace Rendering.MatDataTransfer.Editor
                 workspace.Catalog = null;
 
             ResetCatalogEditorState();
+            SaveState();
         }
 
         private void SetActiveCatalog(ShaderPropertyCatalog catalog)
@@ -674,6 +714,7 @@ namespace Rendering.MatDataTransfer.Editor
                 workspace.Shader = catalog.Shader;
 
             ResetCatalogEditorState();
+            SaveState();
         }
 
         private bool HasSyncableWorkspace()
@@ -826,6 +867,96 @@ namespace Rendering.MatDataTransfer.Editor
                 m_Workspaces.Count - 1);
         }
 
+        private void RestoreState()
+        {
+            string json = EditorPrefs.GetString(GetStatePreferenceKey(), string.Empty);
+            if (string.IsNullOrEmpty(json))
+                return;
+
+            PersistedState state;
+            try
+            {
+                state = JsonUtility.FromJson<PersistedState>(json);
+            }
+            catch (ArgumentException)
+            {
+                return;
+            }
+
+            if (state == null)
+                return;
+
+            List<ShaderWorkspace> restoredWorkspaces = new List<ShaderWorkspace>();
+            if (state.Workspaces != null)
+            {
+                for (int i = 0; i < state.Workspaces.Count; i++)
+                {
+                    PersistedWorkspace persistedWorkspace = state.Workspaces[i];
+                    ShaderPropertyCatalog catalog =
+                        ResolveObject<ShaderPropertyCatalog>(persistedWorkspace?.CatalogId);
+                    Shader shader = ResolveObject<Shader>(persistedWorkspace?.ShaderId);
+                    restoredWorkspaces.Add(new ShaderWorkspace
+                    {
+                        Shader = shader != null ? shader : catalog?.Shader,
+                        Catalog = catalog
+                    });
+                }
+            }
+
+            m_Workspaces = restoredWorkspaces;
+            m_SelectedWorkspaceIndex = state.SelectedWorkspaceIndex;
+            m_SemanticKeyProfile = ResolveObject<MaterialSemanticKeyProfile>(state.SemanticKeyProfileId);
+            EnsureWorkspaceState();
+            ResetCatalogEditorState();
+        }
+
+        private void SaveState()
+        {
+            EnsureWorkspaceState();
+            PersistedState state = new PersistedState
+            {
+                SelectedWorkspaceIndex = m_SelectedWorkspaceIndex,
+                SemanticKeyProfileId = GetObjectId(m_SemanticKeyProfile)
+            };
+
+            for (int i = 0; i < m_Workspaces.Count; i++)
+            {
+                ShaderWorkspace workspace = m_Workspaces[i];
+                state.Workspaces.Add(new PersistedWorkspace
+                {
+                    ShaderId = GetObjectId(workspace?.Shader),
+                    CatalogId = GetObjectId(workspace?.Catalog)
+                });
+            }
+
+            EditorPrefs.SetString(GetStatePreferenceKey(), JsonUtility.ToJson(state));
+        }
+
+        private static string GetStatePreferenceKey()
+        {
+            string projectPath = Application.dataPath.Replace('\\', '/').ToLowerInvariant();
+            return StatePreferenceKeyPrefix + Hash128.Compute(projectPath);
+        }
+
+        private static string GetObjectId(UnityEngine.Object target)
+        {
+            return target != null
+                ? GlobalObjectId.GetGlobalObjectIdSlow(target).ToString()
+                : string.Empty;
+        }
+
+        private static T ResolveObject<T>(string objectId)
+            where T : UnityEngine.Object
+        {
+            if (string.IsNullOrEmpty(objectId) ||
+                !GlobalObjectId.TryParse(objectId, out GlobalObjectId globalObjectId))
+            {
+                return null;
+            }
+
+            return GlobalObjectId.GlobalObjectIdentifierToObjectSlow(globalObjectId) as T;
+        }
+
         private void AssignCreatedCatalog()
         {
             ShaderWorkspace workspace = ActiveWorkspace;
@@ -842,6 +973,7 @@ namespace Rendering.MatDataTransfer.Editor
             EditorUtility.SetDirty(createdCatalog);
             AssetDatabase.SaveAssets();
             ResetCatalogEditorState();
+            SaveState();
             EditorGUIUtility.PingObject(createdCatalog);
         }
 
@@ -852,6 +984,7 @@ namespace Rendering.MatDataTransfer.Editor
                 return;
 
             m_SemanticKeyProfile = createdProfile;
+            SaveState();
             EditorGUIUtility.PingObject(createdProfile);
         }
 
