@@ -55,7 +55,8 @@ namespace Rendering.MatDataTransfer.Editor
         private Vector2 m_ShaderScroll;
         private Vector2 m_PropertyScroll;
         private Vector2 m_DetailScroll;
-        private int m_SelectedPropertyIndex = -1;
+        private readonly HashSet<int> m_SelectedPropertyIndices = new HashSet<int>();
+        private int m_SelectedPropertyAnchorIndex = -1;
         private GUIStyle m_RowLabelStyle;
 
         private float MinimumWindowWidth =>
@@ -368,7 +369,7 @@ namespace Rendering.MatDataTransfer.Editor
         {
             SerializedProperty element = list.GetArrayElementAtIndex(index);
             Rect rowRect = EditorGUILayout.GetControlRect(false, RowHeight);
-            bool selected = m_SelectedPropertyIndex == index;
+            bool selected = m_SelectedPropertyIndices.Contains(index);
 
             if (Event.current.type == EventType.Repaint)
                 DrawPropertyRowBackground(rowRect, selected, element);
@@ -388,10 +389,7 @@ namespace Rendering.MatDataTransfer.Editor
             if (GUI.Button(deleteRect, "×", EditorStyles.miniButton))
             {
                 list.DeleteArrayElementAtIndex(index);
-                if (m_SelectedPropertyIndex == index)
-                    m_SelectedPropertyIndex = -1;
-                else if (m_SelectedPropertyIndex > index)
-                    m_SelectedPropertyIndex--;
+                RemovePropertySelectionIndex(index);
 
                 ApplySerializedObject();
                 GUIUtility.ExitGUI();
@@ -478,15 +476,105 @@ namespace Rendering.MatDataTransfer.Editor
         private void HandlePropertySelection(Rect rowRect, int index)
         {
             Event current = Event.current;
-            if (current.type != EventType.MouseDown || current.button != 0 || !rowRect.Contains(current.mousePosition))
+            if (!rowRect.Contains(current.mousePosition))
                 return;
 
-            m_SelectedPropertyIndex = index;
+            if (current.type == EventType.MouseDown && current.button == 0)
+            {
+                SelectProperty(index, current.shift, current.control || current.command);
+                current.Use();
+                return;
+            }
+
+            if (current.type != EventType.ContextClick)
+                return;
+
+            if (!m_SelectedPropertyIndices.Contains(index))
+                SelectProperty(index, false, false);
+
+            ShowPropertyContextMenu();
             current.Use();
+        }
+
+        private void SelectProperty(int index, bool selectRange, bool toggle)
+        {
+            if (selectRange && m_SelectedPropertyAnchorIndex >= 0)
+            {
+                if (!toggle)
+                    m_SelectedPropertyIndices.Clear();
+
+                int first = Mathf.Min(m_SelectedPropertyAnchorIndex, index);
+                int last = Mathf.Max(m_SelectedPropertyAnchorIndex, index);
+                for (int i = first; i <= last; i++)
+                    m_SelectedPropertyIndices.Add(i);
+                return;
+            }
+
+            if (toggle)
+            {
+                if (!m_SelectedPropertyIndices.Add(index))
+                    m_SelectedPropertyIndices.Remove(index);
+            }
+            else
+            {
+                m_SelectedPropertyIndices.Clear();
+                m_SelectedPropertyIndices.Add(index);
+            }
+
+            m_SelectedPropertyAnchorIndex = index;
+        }
+
+        private void RemovePropertySelectionIndex(int removedIndex)
+        {
+            List<int> adjustedIndices = new List<int>();
+            foreach (int selectedIndex in m_SelectedPropertyIndices)
+            {
+                if (selectedIndex == removedIndex)
+                    continue;
+
+                adjustedIndices.Add(selectedIndex > removedIndex
+                    ? selectedIndex - 1
+                    : selectedIndex);
+            }
+
+            m_SelectedPropertyIndices.Clear();
+            for (int i = 0; i < adjustedIndices.Count; i++)
+                m_SelectedPropertyIndices.Add(adjustedIndices[i]);
+
+            if (m_SelectedPropertyAnchorIndex == removedIndex)
+                m_SelectedPropertyAnchorIndex = -1;
+            else if (m_SelectedPropertyAnchorIndex > removedIndex)
+                m_SelectedPropertyAnchorIndex--;
+        }
+
+        private void PrunePropertySelection(int propertyCount)
+        {
+            m_SelectedPropertyIndices.RemoveWhere(index => index < 0 || index >= propertyCount);
+            if (m_SelectedPropertyAnchorIndex < 0 || m_SelectedPropertyAnchorIndex >= propertyCount)
+                m_SelectedPropertyAnchorIndex = -1;
+        }
+
+        private List<int> GetSortedPropertySelection()
+        {
+            List<int> selectedIndices = new List<int>(m_SelectedPropertyIndices);
+            selectedIndices.Sort();
+            return selectedIndices;
+        }
+
+        private void ShowPropertyContextMenu()
+        {
+            GenericMenu menu = new GenericMenu();
+            GUIContent addContent = new GUIContent("Add Selected Properties to Key Profile");
+            if (m_SemanticKeyProfile != null && m_SelectedPropertyIndices.Count > 0)
+                menu.AddItem(addContent, false, AddSelectedPropertiesToKeyProfile);
+            else
+                menu.AddDisabledItem(addContent);
+            menu.ShowAsContext();
         }
 
         private void DrawDetailPane(SerializedProperty properties, float width)
         {
+            PrunePropertySelection(properties?.arraySize ?? 0);
             using (new EditorGUILayout.VerticalScope(
                        EditorStyles.helpBox,
                        GUILayout.Width(width),
@@ -494,20 +582,45 @@ namespace Rendering.MatDataTransfer.Editor
                        GUILayout.ExpandHeight(true)))
             {
                 using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
-                    EditorGUILayout.LabelField("Property Details", InspectorStyleLibrary.Title);
+                {
+                    string title = m_SelectedPropertyIndices.Count > 1
+                        ? $"Property Details ({m_SelectedPropertyIndices.Count})"
+                        : "Property Details";
+                    EditorGUILayout.LabelField(title, InspectorStyleLibrary.Title);
+                }
 
-                if (properties == null ||
-                    m_SelectedPropertyIndex < 0 ||
-                    m_SelectedPropertyIndex >= properties.arraySize)
+                if (properties == null || m_SelectedPropertyIndices.Count == 0)
                 {
                     EditorGUILayout.HelpBox("Select a property to edit its semantic key.", MessageType.Info);
                     return;
                 }
 
                 m_DetailScroll = EditorGUILayout.BeginScrollView(m_DetailScroll);
-                DrawPropertyDetail(properties.GetArrayElementAtIndex(m_SelectedPropertyIndex));
+                List<int> selectedIndices = GetSortedPropertySelection();
+                for (int i = 0; i < selectedIndices.Count; i++)
+                {
+                    DrawPropertyDetailElement(
+                        properties.GetArrayElementAtIndex(selectedIndices[i]),
+                        selectedIndices[i]);
+                }
                 EditorGUILayout.EndScrollView();
             }
+        }
+
+        private void DrawPropertyDetailElement(SerializedProperty property, int index)
+        {
+            using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+            {
+                SerializedProperty propertyInfo = property.FindPropertyRelative("PropertyInfo");
+                string propertyName = GetString(propertyInfo, "PropertyName");
+                string displayName = GetString(propertyInfo, "InspectorDisplayName");
+                EditorGUILayout.LabelField(
+                    $"{index + 1}. {displayName} ({propertyName})",
+                    InspectorStyleLibrary.Title);
+                DrawPropertyDetail(property);
+            }
+
+            EditorGUILayout.Space(4f);
         }
 
         private void DrawPropertyDetail(SerializedProperty property)
@@ -515,7 +628,7 @@ namespace Rendering.MatDataTransfer.Editor
             SerializedProperty propertyInfo = property.FindPropertyRelative("PropertyInfo");
             SerializedProperty semanticKey = property.FindPropertyRelative("SuggestedSemanticKey");
 
-            EditorGUILayout.Space(8f);
+            EditorGUILayout.Space(4f);
             InspectorStyleLibrary.DrawCopyableParameterValue(
                 "Display Name",
                 GetString(propertyInfo, "InspectorDisplayName"));
@@ -532,6 +645,237 @@ namespace Rendering.MatDataTransfer.Editor
                 MessageType.None);
 
             DrawSemanticProfilePreview(propertyInfo);
+        }
+
+        private void AddSelectedPropertiesToKeyProfile()
+        {
+            if (m_SemanticKeyProfile == null || ActiveCatalog == null)
+                return;
+
+            ApplySerializedObject();
+            List<int> selectedIndices = GetSortedPropertySelection();
+            IReadOnlyList<CatalogProperty> properties = ActiveCatalog.Properties;
+            string shaderName = GetSelectedShaderName();
+
+            Undo.RecordObject(m_SemanticKeyProfile, "Add Properties to Semantic Key Profile");
+            SerializedObject profileObject = new SerializedObject(m_SemanticKeyProfile);
+            profileObject.Update();
+            SerializedProperty rules = profileObject.FindProperty("rules");
+            if (rules == null)
+                return;
+
+            int addedPropertyCount = 0;
+            int createdRuleCount = 0;
+            int skippedPropertyCount = 0;
+            for (int i = 0; i < selectedIndices.Count; i++)
+            {
+                int selectedIndex = selectedIndices[i];
+                if (selectedIndex < 0 || selectedIndex >= properties.Count)
+                {
+                    skippedPropertyCount++;
+                    continue;
+                }
+
+                CatalogProperty property = properties[selectedIndex];
+                if (!TryAddPropertyToProfileRule(
+                        rules,
+                        property,
+                        shaderName,
+                        out bool createdRule))
+                {
+                    skippedPropertyCount++;
+                    continue;
+                }
+
+                addedPropertyCount++;
+                if (createdRule)
+                    createdRuleCount++;
+            }
+
+            if (profileObject.ApplyModifiedProperties())
+            {
+                EditorUtility.SetDirty(m_SemanticKeyProfile);
+                AssetDatabase.SaveAssets();
+            }
+
+            ShowNotification(new GUIContent(
+                $"Profile updated: {addedPropertyCount} added, {createdRuleCount} rules created, {skippedPropertyCount} skipped."));
+        }
+
+        private static bool TryAddPropertyToProfileRule(
+            SerializedProperty rules,
+            CatalogProperty property,
+            string shaderName,
+            out bool createdRule)
+        {
+            createdRule = false;
+            if (property?.PropertyInfo == null ||
+                string.IsNullOrWhiteSpace(property.PropertyInfo.PropertyName) ||
+                string.IsNullOrWhiteSpace(property.SuggestedSemanticKey))
+            {
+                return false;
+            }
+
+            string semanticKey = property.SuggestedSemanticKey.Trim();
+            string propertyName = property.PropertyInfo.PropertyName.Trim();
+            int ruleIndex = FindCompatibleProfileRule(
+                rules,
+                semanticKey,
+                property.PropertyInfo.ValueType,
+                shaderName);
+
+            if (ruleIndex < 0)
+            {
+                ruleIndex = CreateProfileRule(
+                    rules,
+                    semanticKey,
+                    property.PropertyInfo.ValueType,
+                    shaderName);
+                createdRule = true;
+            }
+
+            SerializedProperty propertyNames = rules
+                .GetArrayElementAtIndex(ruleIndex)
+                .FindPropertyRelative("PropertyNames");
+            if (ContainsString(propertyNames, propertyName))
+                return false;
+
+            int newIndex = propertyNames.arraySize;
+            propertyNames.InsertArrayElementAtIndex(newIndex);
+            propertyNames.GetArrayElementAtIndex(newIndex).stringValue = propertyName;
+            return true;
+        }
+
+        private static int FindCompatibleProfileRule(
+            SerializedProperty rules,
+            string semanticKey,
+            ParamValueType valueType,
+            string shaderName)
+        {
+            for (int i = 0; i < rules.arraySize; i++)
+            {
+                SerializedProperty rule = rules.GetArrayElementAtIndex(i);
+                if (!GetBool(rule, "Enabled"))
+                    continue;
+                if (!string.Equals(GetString(rule, "SemanticKey").Trim(), semanticKey, StringComparison.Ordinal))
+                    continue;
+                if (GetEnumValue(rule, "ValueType") != (int)valueType)
+                    continue;
+                if (!RuleIncludesShader(rule, shaderName))
+                    continue;
+
+                return i;
+            }
+
+            return -1;
+        }
+
+        private static bool RuleIncludesShader(SerializedProperty rule, string shaderName)
+        {
+            int matchMode = GetEnumValue(rule, "ShaderMatchMode");
+            SerializedProperty excludedShaders = rule.FindPropertyRelative("ExcludeShaders");
+            if (ShaderListMatches(excludedShaders, shaderName, matchMode))
+                return false;
+
+            SerializedProperty includedShaders = rule.FindPropertyRelative("IncludeShaders");
+            if (!HasNonEmptyString(includedShaders))
+                return true;
+
+            return ShaderListMatches(includedShaders, shaderName, matchMode);
+        }
+
+        private static bool ShaderListMatches(
+            SerializedProperty shaderNames,
+            string shaderName,
+            int matchMode)
+        {
+            if (shaderNames == null || string.IsNullOrWhiteSpace(shaderName))
+                return false;
+
+            for (int i = 0; i < shaderNames.arraySize; i++)
+            {
+                string pattern = shaderNames.GetArrayElementAtIndex(i).stringValue;
+                if (string.IsNullOrWhiteSpace(pattern))
+                    continue;
+
+                bool matches = matchMode == (int)MaterialSemanticShaderMatchMode.Prefix
+                    ? shaderName.StartsWith(pattern, StringComparison.Ordinal)
+                    : string.Equals(shaderName, pattern, StringComparison.Ordinal);
+                if (matches)
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static int CreateProfileRule(
+            SerializedProperty rules,
+            string semanticKey,
+            ParamValueType valueType,
+            string shaderName)
+        {
+            int index = rules.arraySize;
+            rules.InsertArrayElementAtIndex(index);
+            SerializedProperty rule = rules.GetArrayElementAtIndex(index);
+            rule.FindPropertyRelative("SemanticKey").stringValue = semanticKey;
+            rule.FindPropertyRelative("PropertyNames").ClearArray();
+            rule.FindPropertyRelative("ValueType").enumValueIndex = (int)valueType;
+            SerializedProperty includedShaders = rule.FindPropertyRelative("IncludeShaders");
+            includedShaders.ClearArray();
+            if (!string.IsNullOrWhiteSpace(shaderName))
+            {
+                includedShaders.InsertArrayElementAtIndex(0);
+                includedShaders.GetArrayElementAtIndex(0).stringValue = shaderName.Trim();
+            }
+            rule.FindPropertyRelative("ExcludeShaders").ClearArray();
+            rule.FindPropertyRelative("ShaderMatchMode").enumValueIndex =
+                (int)MaterialSemanticShaderMatchMode.Exact;
+            rule.FindPropertyRelative("Priority").intValue = 0;
+            rule.FindPropertyRelative("Enabled").boolValue = true;
+            rule.FindPropertyRelative("Description").stringValue = string.Empty;
+            return index;
+        }
+
+        private static bool ContainsString(SerializedProperty list, string expected)
+        {
+            if (list == null || string.IsNullOrWhiteSpace(expected))
+                return false;
+
+            string normalizedExpected = expected.Trim();
+            for (int i = 0; i < list.arraySize; i++)
+            {
+                string value = list.GetArrayElementAtIndex(i).stringValue;
+                if (string.Equals(value?.Trim(), normalizedExpected, StringComparison.Ordinal))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool HasNonEmptyString(SerializedProperty list)
+        {
+            if (list == null)
+                return false;
+
+            for (int i = 0; i < list.arraySize; i++)
+            {
+                if (!string.IsNullOrWhiteSpace(list.GetArrayElementAtIndex(i).stringValue))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool GetBool(SerializedProperty property, string relativeName)
+        {
+            SerializedProperty child = property?.FindPropertyRelative(relativeName);
+            return child != null && child.boolValue;
+        }
+
+        private static int GetEnumValue(SerializedProperty property, string relativeName)
+        {
+            SerializedProperty child = property?.FindPropertyRelative(relativeName);
+            return child != null ? child.enumValueIndex : -1;
         }
 
         private enum ColumnSplitter
@@ -812,10 +1156,7 @@ namespace Rendering.MatDataTransfer.Editor
                     continue;
 
                 list.DeleteArrayElementAtIndex(i);
-                if (m_SelectedPropertyIndex == i)
-                    m_SelectedPropertyIndex = -1;
-                else if (m_SelectedPropertyIndex > i)
-                    m_SelectedPropertyIndex--;
+                RemovePropertySelectionIndex(i);
             }
 
             ApplySerializedObject();
@@ -845,7 +1186,8 @@ namespace Rendering.MatDataTransfer.Editor
         private void ResetCatalogEditorState()
         {
             m_CatalogObject = null;
-            m_SelectedPropertyIndex = -1;
+            m_SelectedPropertyIndices.Clear();
+            m_SelectedPropertyAnchorIndex = -1;
             m_PropertyScroll = Vector2.zero;
             m_DetailScroll = Vector2.zero;
         }
