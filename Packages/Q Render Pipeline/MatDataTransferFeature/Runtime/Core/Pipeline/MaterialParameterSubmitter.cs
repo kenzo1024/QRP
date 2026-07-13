@@ -51,19 +51,6 @@ namespace Rendering.MatDataTransfer.Runtime
             ParamWriteLayer layer,
             int priority = 0)
         {
-            if (scope.Mode == ParamSubmitScopeMode.Material)
-            {
-                return ForMaterial(
-                    target,
-                    semanticKey,
-                    value,
-                    scope.Renderer,
-                    scope.MaterialSlot,
-                    source,
-                    layer,
-                    priority);
-            }
-
             ParamSubmitTrace rootTrace = new ParamSubmitTrace();
             rootTrace.AddStep(ParamSubmitStep.Submitted(
                 "Scope.Begin",

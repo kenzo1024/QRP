@@ -72,7 +72,11 @@ namespace Rendering.MatDataTransfer.Runtime
                     continue;
 
                 string propertyName = info.PropertyName;
-                string semanticKey = ResolveSemanticKey(info, semanticKeyProfile, warnings);
+                string semanticKey = ResolveSemanticKey(
+                    info,
+                    semanticKeyProfile,
+                    warnings,
+                    out CatalogSemanticKeySource keySource);
                 incomingPropertyNames.Add(propertyName);
 
                 CatalogProperty existing = FindByPropertyName(propertyName);
@@ -81,11 +85,12 @@ namespace Rendering.MatDataTransfer.Runtime
                 {
                     existing.PropertyInfo = info;
                     existing.SuggestedSemanticKey = semanticKey;
+                    existing.SemanticKeySource = keySource;
                     existing.Status = CatalogPropertyStatus.Ok;
                 }
                 else
                 {
-                    properties.Add(new CatalogProperty(info, semanticKey)
+                    properties.Add(new CatalogProperty(info, semanticKey, keySource)
                     {
                         Status = CatalogPropertyStatus.New
                     });
@@ -178,15 +183,18 @@ namespace Rendering.MatDataTransfer.Runtime
         private string ResolveSemanticKey(
             ShaderPropertyInfo info,
             MaterialSemanticKeyProfile semanticKeyProfile,
-            List<string> warnings)
+            List<string> warnings,
+            out CatalogSemanticKeySource keySource)
         {
             string defaultKey = GenerateSemanticKey(info, shaderName);
             if (semanticKeyProfile != null &&
                 semanticKeyProfile.TryResolveSemanticKey(shaderName, info, out string semanticKey, warnings))
             {
+                keySource = CatalogSemanticKeySource.Profile;
                 return semanticKey;
             }
 
+            keySource = CatalogSemanticKeySource.Generated;
             return defaultKey;
         }
 

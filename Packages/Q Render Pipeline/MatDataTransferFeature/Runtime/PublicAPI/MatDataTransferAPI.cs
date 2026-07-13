@@ -4,44 +4,6 @@ namespace Rendering.MatDataTransfer.Runtime
 {
     public static class MatDataTransferAPI
     {
-        public static ParamSubmitTrace Submit(
-            MatDataTransferInstance target,
-            string semanticKey,
-            ParamValue value,
-            ParamSubmitScope scope,
-            MatDataTransferSubmitSource source,
-            ParamWriteLayer layer,
-            int priority = 0)
-        {
-            return MaterialParameterSubmitter.Submit(
-                target,
-                semanticKey,
-                value,
-                scope,
-                source,
-                layer,
-                priority);
-        }
-
-        public static ParamSubmitTrace Submit(
-            MatDataTransferInstance target,
-            string semanticKey,
-            ParamValue value,
-            RendererMaterialBinding binding,
-            MatDataTransferSubmitSource source,
-            ParamWriteLayer layer,
-            int priority = 0)
-        {
-            return MaterialParameterSubmitter.Submit(
-                target,
-                semanticKey,
-                value,
-                binding,
-                source,
-                layer,
-                priority);
-        }
-
         public static ParamSubmitTrace ForMaterial(
             MatDataTransferInstance target,
             string semanticKey,

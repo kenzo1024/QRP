@@ -88,47 +88,29 @@ namespace Rendering.MatDataTransfer.Runtime
         }
     }
 
-    public enum ParamSubmitScopeMode
+    internal enum ParamSubmitScopeMode
     {
-        Material,
         SupportsKey,
         Shader
     }
 
-    public readonly struct ParamSubmitScope
+    internal readonly struct ParamSubmitScope
     {
         public readonly ParamSubmitScopeMode Mode;
-        public readonly Renderer Renderer;
-        public readonly int MaterialSlot;
         public readonly string ShaderName;
 
         private ParamSubmitScope(
             ParamSubmitScopeMode mode,
-            Renderer renderer,
-            int materialSlot,
             string shaderName)
         {
             Mode = mode;
-            Renderer = renderer;
-            MaterialSlot = materialSlot;
             ShaderName = shaderName ?? string.Empty;
-        }
-
-        public static ParamSubmitScope Material(Renderer renderer, int materialSlot)
-        {
-            return new ParamSubmitScope(
-                ParamSubmitScopeMode.Material,
-                renderer,
-                materialSlot,
-                string.Empty);
         }
 
         public static ParamSubmitScope SupportsKey()
         {
             return new ParamSubmitScope(
                 ParamSubmitScopeMode.SupportsKey,
-                null,
-                -1,
                 string.Empty);
         }
 
@@ -136,8 +118,6 @@ namespace Rendering.MatDataTransfer.Runtime
         {
             return new ParamSubmitScope(
                 ParamSubmitScopeMode.Shader,
-                null,
-                -1,
                 shaderName);
         }
     }
