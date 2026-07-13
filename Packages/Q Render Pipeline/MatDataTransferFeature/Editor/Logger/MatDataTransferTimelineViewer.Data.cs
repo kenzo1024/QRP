@@ -145,14 +145,10 @@ namespace Rendering.MatDataTransfer.Editor
             RestoreSelectedRecordIndex(frame);
             if (m_SelectedRecordIndex < 0
                 || m_SelectedRecordIndex >= frame.Records.Count
-                || !PassesStatusFilter(frame.Records[m_SelectedRecordIndex]))
+                || !PassesRecordFilters(frame.Records[m_SelectedRecordIndex]))
             {
-                List<int> indices = BuildFilteredRecordIndices(frame);
-                if (indices.Count == 0)
-                    return false;
-
-                int firstIndex = indices[0];
-                SelectRecord(firstIndex, frame.Records[firstIndex]);
+                ClearSelectedRecord();
+                return false;
             }
 
             record = frame.Records[Mathf.Clamp(m_SelectedRecordIndex, 0, frame.Records.Count - 1)];
@@ -168,83 +164,18 @@ namespace Rendering.MatDataTransfer.Editor
             if (frame == null)
                 return records;
 
-            if (!m_ShowAllRecords)
+            if (hasSelected)
             {
-                if (hasSelected && PassesStatusFilter(selected))
+                if (PassesRecordFilters(selected))
                     records.Add(selected);
                 return records;
             }
 
-            for (int i = 0; i < frame.Records.Count && records.Count < 24; i++)
-            {
-                MatDataTransferTimelineRecord record = frame.Records[i];
-                if (PassesStatusFilter(record))
-                    records.Add(record);
-            }
+            List<int> filteredIndices = BuildFilteredRecordIndices(frame);
+            for (int i = 0; i < filteredIndices.Count; i++)
+                records.Add(frame.Records[filteredIndices[i]]);
+
             return records;
-        }
-
-        private static List<InstanceBucket> BuildInstanceBuckets(List<MatDataTransferTimelineRecord> records)
-        {
-            List<InstanceBucket> buckets = new List<InstanceBucket>();
-            for (int i = 0; i < records.Count; i++)
-            {
-                MatDataTransferTimelineRecord record = records[i];
-                int index = FindBucketIndex(buckets, record.InstanceId);
-                if (index < 0)
-                {
-                    buckets.Add(new InstanceBucket
-                    {
-                        InstanceId = record.InstanceId,
-                        Name = "Instance " + (buckets.Count + 1),
-                        Path = BuildInstanceLabel(record),
-                        Count = 1
-                    });
-                }
-                else
-                {
-                    InstanceBucket bucket = buckets[index];
-                    bucket.Count++;
-                    buckets[index] = bucket;
-                }
-            }
-
-            if (buckets.Count == 0)
-            {
-                buckets.Add(new InstanceBucket
-                {
-                    InstanceId = -1,
-                    Name = "Instance",
-                    Path = "<empty>",
-                    Count = 0
-                });
-            }
-
-            while (buckets.Count > 4)
-                buckets.RemoveAt(buckets.Count - 1);
-            return buckets;
-        }
-
-        private static int GetInstanceBucketIndex(List<MatDataTransferTimelineRecord> records, int instanceId)
-        {
-            return GetInstanceBucketIndex(BuildInstanceBuckets(records), instanceId);
-        }
-
-        private static int GetInstanceBucketIndex(List<InstanceBucket> buckets, int instanceId)
-        {
-            int index = FindBucketIndex(buckets, instanceId);
-            return Mathf.Max(0, index);
-        }
-
-        private static int FindBucketIndex(List<InstanceBucket> buckets, int instanceId)
-        {
-            for (int i = 0; i < buckets.Count; i++)
-            {
-                if (buckets[i].InstanceId == instanceId)
-                    return i;
-            }
-
-            return -1;
         }
 
         private List<int> BuildFilteredRecordIndices(MatDataTransferTimelineFrame frame)
@@ -255,28 +186,245 @@ namespace Rendering.MatDataTransfer.Editor
 
             for (int i = 0; i < frame.Records.Count; i++)
             {
-                if (PassesStatusFilter(frame.Records[i]))
+                if (PassesRecordFilters(frame.Records[i]))
                     indices.Add(i);
             }
 
+            SortRecordIndices(frame, indices);
             return indices;
+        }
+
+        private List<RecordGroup> BuildRecordGroups(MatDataTransferTimelineFrame frame, List<int> filteredIndices)
+        {
+            List<RecordGroup> groups = new List<RecordGroup>();
+            if (frame == null || filteredIndices == null || filteredIndices.Count == 0)
+                return groups;
+
+            if (m_RecordGroupMode == TimelineGroupMode.None)
+            {
+                RecordGroup group = new RecordGroup { Title = "Records", Summary = filteredIndices.Count + " records" };
+                group.Indices.AddRange(filteredIndices);
+                groups.Add(group);
+                return groups;
+            }
+
+            Dictionary<string, int> lookup = new Dictionary<string, int>(StringComparer.Ordinal);
+            for (int i = 0; i < filteredIndices.Count; i++)
+            {
+                int index = filteredIndices[i];
+                MatDataTransferTimelineRecord record = frame.Records[index];
+                string title = BuildGroupTitle(record);
+                string key = title ?? string.Empty;
+                if (!lookup.TryGetValue(key, out int groupIndex))
+                {
+                    groupIndex = groups.Count;
+                    lookup.Add(key, groupIndex);
+                    groups.Add(new RecordGroup { Title = title });
+                }
+
+                groups[groupIndex].Indices.Add(index);
+            }
+
+            for (int i = 0; i < groups.Count; i++)
+            {
+                RecordGroup group = groups[i];
+                group.Summary = BuildGroupSummary(frame, group.Indices);
+                groups[i] = group;
+            }
+
+            return groups;
+        }
+
+        private bool PassesRecordFilters(MatDataTransferTimelineRecord record)
+        {
+            return PassesStatusFilter(record) && PassesSearchFilter(record);
         }
 
         private bool PassesStatusFilter(MatDataTransferTimelineRecord record)
         {
-            switch (m_StatusFilter)
+            TimelineStatusFilter flag = StatusToFilter(record.Status);
+            return (m_StatusFilter & flag) != 0;
+        }
+
+        private bool PassesSearchFilter(MatDataTransferTimelineRecord record)
+        {
+            if (string.IsNullOrWhiteSpace(m_RecordSearch))
+                return true;
+
+            string[] tokens = m_RecordSearch.Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            for (int i = 0; i < tokens.Length; i++)
             {
-                case TimelineStatusFilter.Applied:
-                    return record.Status == ParamWriteStatus.Applied;
-                case TimelineStatusFilter.Overridden:
-                    return record.Status == ParamWriteStatus.Overridden;
-                case TimelineStatusFilter.Failed:
-                    return record.Status == ParamWriteStatus.Rejected
-                        || record.Status == ParamWriteStatus.WriterFailed;
-                case TimelineStatusFilter.All:
-                default:
-                    return true;
+                if (!PassesSearchToken(record, tokens[i]))
+                    return false;
             }
+
+            return true;
+        }
+
+        private bool PassesSearchToken(MatDataTransferTimelineRecord record, string token)
+        {
+            int separator = token.IndexOf(':');
+            if (separator <= 0 || separator >= token.Length - 1)
+                return ContainsIgnoreCase(BuildSearchBlob(record), token);
+
+            string key = token.Substring(0, separator).Trim();
+            string value = token.Substring(separator + 1).Trim();
+            if (string.IsNullOrEmpty(value))
+                return true;
+
+            switch (key.ToLowerInvariant())
+            {
+                case "key":
+                case "semantic":
+                    return ContainsIgnoreCase(Safe(record.Identity.SemanticKey), value)
+                        || ContainsIgnoreCase(Safe(record.Binding.MatchedSemanticKey), value);
+                case "source":
+                    return ContainsIgnoreCase(Safe(record.Identity.SourceId), value);
+                case "provider":
+                    return ContainsIgnoreCase(Safe(record.ProviderName), value);
+                case "instance":
+                    return ContainsIgnoreCase(record.InstanceId.ToString(), value)
+                        || ContainsIgnoreCase(BuildInstanceLabel(record), value);
+                case "renderer":
+                    return ContainsIgnoreCase(record.Identity.Binding.RendererId.ToString(), value)
+                        || ContainsIgnoreCase(Safe(record.RendererPath), value)
+                        || ContainsIgnoreCase(Safe(record.Identity.Binding.RendererPathId), value);
+                case "slot":
+                    return ContainsIgnoreCase(record.Identity.Binding.MaterialSlot.ToString(), value);
+                case "shader":
+                    return ContainsIgnoreCase(Safe(record.Binding.ShaderName), value);
+                case "property":
+                case "prop":
+                    return ContainsIgnoreCase(Safe(record.Binding.PropertyName), value)
+                        || ContainsIgnoreCase(record.Binding.PropertyId.ToString(), value);
+                case "stage":
+                    return ContainsIgnoreCase(GetStage(record), value);
+                case "code":
+                    return ContainsIgnoreCase(GetResultCode(record), value);
+                case "msg":
+                case "message":
+                    return ContainsIgnoreCase(GetMessage(record), value);
+                case "seq":
+                    return ContainsIgnoreCase(record.Sequence.ToString(), value);
+                case "status":
+                    return ContainsIgnoreCase(record.Status.ToString(), value)
+                        || (IsFailedStatus(record.Status) && ContainsIgnoreCase("failed", value));
+                case "value":
+                    return ContainsIgnoreCase(Safe(record.ValuePreview), value)
+                        || ContainsIgnoreCase(record.ValueHash.ToString("X16"), value);
+                case "path":
+                    return ContainsIgnoreCase(Safe(record.GameObjectPath), value)
+                        || ContainsIgnoreCase(Safe(record.RendererPath), value);
+                default:
+                    return ContainsIgnoreCase(BuildSearchBlob(record), value);
+            }
+        }
+
+        private void SortRecordIndices(MatDataTransferTimelineFrame frame, List<int> indices)
+        {
+            indices.Sort((left, right) => CompareRecords(frame.Records[left], frame.Records[right]));
+        }
+
+        private int CompareRecords(MatDataTransferTimelineRecord left, MatDataTransferTimelineRecord right)
+        {
+            int result;
+            switch (m_RecordSortMode)
+            {
+                case TimelineSortMode.Status:
+                    result = StatusSortRank(left.Status).CompareTo(StatusSortRank(right.Status));
+                    break;
+                case TimelineSortMode.SemanticKey:
+                    result = CompareText(left.Identity.SemanticKey, right.Identity.SemanticKey);
+                    break;
+                case TimelineSortMode.Source:
+                    result = CompareText(left.Identity.SourceId, right.Identity.SourceId);
+                    break;
+                case TimelineSortMode.Instance:
+                    result = left.InstanceId.CompareTo(right.InstanceId);
+                    break;
+                case TimelineSortMode.Property:
+                    result = CompareText(left.Binding.PropertyName, right.Binding.PropertyName);
+                    break;
+                case TimelineSortMode.Sequence:
+                default:
+                    result = left.Sequence.CompareTo(right.Sequence);
+                    break;
+            }
+
+            return result != 0 ? result : left.Sequence.CompareTo(right.Sequence);
+        }
+
+        private static int CompareText(string left, string right)
+        {
+            return string.Compare(left ?? string.Empty, right ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static int StatusSortRank(ParamWriteStatus status)
+        {
+            switch (status)
+            {
+                case ParamWriteStatus.Rejected:
+                case ParamWriteStatus.WriterFailed:
+                    return 0;
+                case ParamWriteStatus.Overridden:
+                    return 1;
+                case ParamWriteStatus.Applied:
+                    return 2;
+                case ParamWriteStatus.Queued:
+                    return 3;
+                case ParamWriteStatus.Submitted:
+                default:
+                    return 4;
+            }
+        }
+
+        private string BuildGroupTitle(MatDataTransferTimelineRecord record)
+        {
+            switch (m_RecordGroupMode)
+            {
+                case TimelineGroupMode.Status:
+                    return record.Status.ToString();
+                case TimelineGroupMode.SemanticKey:
+                    return Safe(record.Identity.SemanticKey);
+                case TimelineGroupMode.Source:
+                    return Safe(record.Identity.SourceId);
+                case TimelineGroupMode.Instance:
+                    return BuildInstanceLabel(record);
+                case TimelineGroupMode.Renderer:
+                    return "#" + record.Identity.Binding.RendererId + " / Slot " + record.Identity.Binding.MaterialSlot;
+                case TimelineGroupMode.Property:
+                    return Safe(record.Binding.PropertyName);
+                case TimelineGroupMode.ResultCode:
+                    return GetResultCode(record);
+                case TimelineGroupMode.None:
+                default:
+                    return "Records";
+            }
+        }
+
+        private static string BuildGroupSummary(MatDataTransferTimelineFrame frame, List<int> indices)
+        {
+            int failed = 0;
+            int applied = 0;
+            int overridden = 0;
+            for (int i = 0; i < indices.Count; i++)
+            {
+                ParamWriteStatus status = frame.Records[indices[i]].Status;
+                if (IsFailedStatus(status))
+                    failed++;
+                else if (status == ParamWriteStatus.Applied)
+                    applied++;
+                else if (status == ParamWriteStatus.Overridden)
+                    overridden++;
+            }
+
+            if (failed > 0)
+                return indices.Count + " / " + failed + " failed";
+            if (overridden > 0)
+                return indices.Count + " / " + overridden + " overridden";
+            if (applied > 0)
+                return indices.Count + " / " + applied + " applied";
+            return indices.Count + " records";
         }
 
         private void SelectRecord(int index, MatDataTransferTimelineRecord record)
@@ -326,8 +474,12 @@ namespace Rendering.MatDataTransfer.Editor
             }
 
             RestoreSelectedRecordIndex(frame);
-            if (m_SelectedRecordIndex < 0 || m_SelectedRecordIndex >= frame.Records.Count)
-                SelectRecord(0, frame.Records[0]);
+            if (m_SelectedRecordIndex < 0
+                || m_SelectedRecordIndex >= frame.Records.Count
+                || !PassesRecordFilters(frame.Records[m_SelectedRecordIndex]))
+            {
+                ClearSelectedRecord();
+            }
         }
 
         private static MatDataTransferTimelineRecord CreateRecordFromLogLine(MatDataTransferTimelineLogLine line)
@@ -430,6 +582,55 @@ namespace Rendering.MatDataTransfer.Editor
             return semantic.Length > 18 ? semantic.Substring(0, 17) + "..." : semantic;
         }
 
+        private static string ShortText(string text, int maxLength)
+        {
+            text = Safe(text);
+            return text.Length <= maxLength ? text : text.Substring(0, Mathf.Max(0, maxLength - 3)) + "...";
+        }
+
+        private static string GetStage(MatDataTransferTimelineRecord record)
+        {
+            return record.Step != null ? Safe(record.Step.Stage) : "<none>";
+        }
+
+        private static string GetResultCode(MatDataTransferTimelineRecord record)
+        {
+            return record.Step != null ? record.Step.Code.ToString() : ParamWriteResultCode.None.ToString();
+        }
+
+        private static string GetMessage(MatDataTransferTimelineRecord record)
+        {
+            return record.Step != null ? Safe(record.Step.Message) : "<empty>";
+        }
+
+        private static string BuildSearchBlob(MatDataTransferTimelineRecord record)
+        {
+            return Safe(record.Identity.SemanticKey)
+                + " " + Safe(record.Binding.MatchedSemanticKey)
+                + " " + Safe(record.Identity.SourceId)
+                + " " + Safe(record.ProviderName)
+                + " " + Safe(record.GameObjectPath)
+                + " " + Safe(record.RendererPath)
+                + " " + Safe(record.Binding.ShaderName)
+                + " " + Safe(record.Binding.CatalogName)
+                + " " + Safe(record.Binding.PropertyName)
+                + " " + record.Binding.PropertyId
+                + " " + record.Sequence
+                + " " + record.InstanceId
+                + " " + record.Identity.Binding.RendererId
+                + " " + record.Identity.Binding.MaterialSlot
+                + " " + record.Status
+                + " " + GetStage(record)
+                + " " + GetResultCode(record)
+                + " " + GetMessage(record)
+                + " " + Safe(record.ValuePreview);
+        }
+
+        private static bool ContainsIgnoreCase(string text, string value)
+        {
+            return (text ?? string.Empty).IndexOf(value ?? string.Empty, StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
         private static Color StatusColor(ParamWriteStatus status)
         {
             switch (status)
@@ -442,15 +643,49 @@ namespace Rendering.MatDataTransfer.Editor
                 case ParamWriteStatus.WriterFailed:
                     return new Color(0.82f, 0.35f, 0.34f);
                 case ParamWriteStatus.Queued:
+                    return new Color(0.48f, 0.38f, 0.86f);
                 case ParamWriteStatus.Submitted:
                 default:
                     return new Color(0.35f, 0.64f, 1f);
             }
         }
 
+        private static TimelineStatusFilter StatusToFilter(ParamWriteStatus status)
+        {
+            switch (status)
+            {
+                case ParamWriteStatus.Queued:
+                    return TimelineStatusFilter.Queued;
+                case ParamWriteStatus.Applied:
+                    return TimelineStatusFilter.Applied;
+                case ParamWriteStatus.Overridden:
+                    return TimelineStatusFilter.Overridden;
+                case ParamWriteStatus.Rejected:
+                    return TimelineStatusFilter.Rejected;
+                case ParamWriteStatus.WriterFailed:
+                    return TimelineStatusFilter.WriterFailed;
+                case ParamWriteStatus.Submitted:
+                default:
+                    return TimelineStatusFilter.Submitted;
+            }
+        }
+
+        private static bool IsFailedStatus(ParamWriteStatus status)
+        {
+            return status == ParamWriteStatus.Rejected
+                || status == ParamWriteStatus.WriterFailed;
+        }
+
         private static string Safe(string value)
         {
             return string.IsNullOrEmpty(value) ? "<empty>" : value;
+        }
+
+        private sealed class RecordGroup
+        {
+            public string Title;
+            public string Summary;
+            public readonly List<int> Indices = new List<int>();
         }
 
         private struct InstanceBucket
@@ -472,24 +707,38 @@ namespace Rendering.MatDataTransfer.Editor
             public Rect Apply;
         }
 
-        private struct FlowNodeRects
-        {
-            public Rect Submit;
-            public Rect Feature;
-            public Rect Resolve;
-            public Rect Writer;
-            public Rect Apply;
-            public Rect Conflict;
-            public Rect Failed;
-            public List<Rect> InstanceNodes;
-        }
-
+        [Flags]
         private enum TimelineStatusFilter
         {
-            All,
-            Applied,
-            Overridden,
-            Failed
+            Submitted = 1 << 0,
+            Queued = 1 << 1,
+            Applied = 1 << 2,
+            Overridden = 1 << 3,
+            Rejected = 1 << 4,
+            WriterFailed = 1 << 5,
+            All = Submitted | Queued | Applied | Overridden | Rejected | WriterFailed
+        }
+
+        private enum TimelineSortMode
+        {
+            Sequence,
+            Status,
+            SemanticKey,
+            Source,
+            Instance,
+            Property
+        }
+
+        private enum TimelineGroupMode
+        {
+            None,
+            Status,
+            SemanticKey,
+            Source,
+            Instance,
+            Renderer,
+            Property,
+            ResultCode
         }
 
         private enum LabelLane

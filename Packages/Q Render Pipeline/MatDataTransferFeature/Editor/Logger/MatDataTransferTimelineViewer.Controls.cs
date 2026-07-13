@@ -7,6 +7,9 @@ namespace Rendering.MatDataTransfer.Editor
 {
     public sealed partial class MatDataTransferTimelineViewer
     {
+        private const float RecordGroupHeaderHeight = 26f;
+        private const float RecordRowHeight = 78f;
+
         private void DrawToolbar()
         {
             Rect rect = GUILayoutUtility.GetRect(0f, ToolbarHeight, GUILayout.ExpandWidth(true));
@@ -145,22 +148,63 @@ namespace Rendering.MatDataTransfer.Editor
         {
             GUI.Box(rect, GUIContent.none, EditorStyles.helpBox);
             GUI.Label(new Rect(rect.x + 10f, rect.y + 8f, rect.width - 20f, 18f), "Frame " + m_FrameOffset + " Records", EditorStyles.boldLabel);
-            GUI.Box(new Rect(rect.x + 10f, rect.y + 38f, rect.width - 20f, 24f), "Search / Semantic / Source", EditorStyles.toolbarTextField);
+            DrawRecordSearch(new Rect(rect.x + 10f, rect.y + 38f, rect.width - 20f, 24f));
+            DrawStatusFilters(new Rect(rect.x + 10f, rect.y + 74f, rect.width - 20f, 64f));
+            DrawRecordOptions(new Rect(rect.x + 10f, rect.y + 148f, rect.width - 20f, 22f));
 
-            Rect chip = new Rect(rect.x + 10f, rect.y + 74f, 50f, 20f);
-            DrawFilterChip(chip, "All", StatusColor(ParamWriteStatus.Submitted), TimelineStatusFilter.All);
-            chip.x += 56f;
-            chip.width = 76f;
-            DrawFilterChip(chip, "Applied", StatusColor(ParamWriteStatus.Applied), TimelineStatusFilter.Applied);
-            chip = new Rect(rect.x + 10f, rect.y + 98f, 92f, 20f);
-            chip.width = 92f;
-            DrawFilterChip(chip, "Overridden", StatusColor(ParamWriteStatus.Overridden), TimelineStatusFilter.Overridden);
-            chip.x += 100f;
-            chip.width = 68f;
-            DrawFilterChip(chip, "Failed", StatusColor(ParamWriteStatus.WriterFailed), TimelineStatusFilter.Failed);
+            DrawRecordRows(new Rect(rect.x + 10f, rect.y + 180f, rect.width - 20f, rect.height - 308f));
+            DrawRecordSummary(new Rect(rect.x + 10f, rect.yMax - 118f, rect.width - 20f, 44f));
+            DrawQueryHelp(new Rect(rect.x + 10f, rect.yMax - 66f, rect.width - 20f, 56f));
+        }
 
-            DrawRecordRows(new Rect(rect.x + 10f, rect.y + 132f, rect.width - 20f, rect.height - 262f));
-            DrawReplayHelp(new Rect(rect.x + 10f, rect.yMax - 118f, rect.width - 20f, 108f));
+        private void DrawRecordSearch(Rect rect)
+        {
+            Rect textRect = new Rect(rect.x, rect.y, Mathf.Max(1f, rect.width), rect.height);
+            string next = GUI.TextField(textRect, m_RecordSearch ?? string.Empty, ToolbarSearchField);
+            if (next != m_RecordSearch)
+            {
+                m_RecordSearch = next;
+                ClearSelectedRecord();
+                m_RecordScroll = Vector2.zero;
+            }
+        }
+
+        private void DrawStatusFilters(Rect rect)
+        {
+            GUI.Label(new Rect(rect.x, rect.y, 48f, 18f), "Status", EditorStyles.miniLabel);
+            Rect chip = new Rect(rect.x, rect.y + 20f, 48f, 20f);
+            DrawStatusChip(chip, "All", StatusColor(ParamWriteStatus.Submitted), TimelineStatusFilter.All);
+            chip.x += 54f;
+            chip.width = 78f;
+            DrawStatusChip(chip, "Applied", StatusColor(ParamWriteStatus.Applied), TimelineStatusFilter.Applied);
+            chip.x += 84f;
+            chip.width = 78f;
+            DrawStatusChip(chip, "Rejected", StatusColor(ParamWriteStatus.Rejected), TimelineStatusFilter.Rejected);
+
+            chip = new Rect(rect.x, rect.y + 44f, 92f, 20f);
+            DrawStatusChip(chip, "Overridden", StatusColor(ParamWriteStatus.Overridden), TimelineStatusFilter.Overridden);
+            chip.x += 98f;
+            chip.width = 96f;
+            DrawStatusChip(chip, "WriterFailed", StatusColor(ParamWriteStatus.WriterFailed), TimelineStatusFilter.WriterFailed);
+        }
+
+        private void DrawRecordOptions(Rect rect)
+        {
+            GUI.Label(new Rect(rect.x, rect.y + 3f, 28f, 16f), "Sort", EditorStyles.miniLabel);
+            TimelineSortMode nextSort = (TimelineSortMode)EditorGUI.EnumPopup(new Rect(rect.x + 32f, rect.y, 82f, rect.height), m_RecordSortMode);
+            if (nextSort != m_RecordSortMode)
+            {
+                m_RecordSortMode = nextSort;
+                m_RecordScroll = Vector2.zero;
+            }
+
+            GUI.Label(new Rect(rect.x + 122f, rect.y + 3f, 42f, 16f), "Group", EditorStyles.miniLabel);
+            TimelineGroupMode nextGroup = (TimelineGroupMode)EditorGUI.EnumPopup(new Rect(rect.x + 168f, rect.y, rect.width - 168f, rect.height), m_RecordGroupMode);
+            if (nextGroup != m_RecordGroupMode)
+            {
+                m_RecordGroupMode = nextGroup;
+                m_RecordScroll = Vector2.zero;
+            }
         }
 
         private void DrawRecordRows(Rect rect)
@@ -177,21 +221,47 @@ namespace Rendering.MatDataTransfer.Editor
             List<int> filteredIndices = BuildFilteredRecordIndices(frame);
             if (filteredIndices.Count == 0)
             {
-                EditorGUI.HelpBox(rect, "No records match the selected status filter.", MessageType.Info);
+                EditorGUI.HelpBox(rect, "No records match the current filters.", MessageType.Info);
                 return;
             }
 
-            Rect view = new Rect(0f, 0f, rect.width - 16f, filteredIndices.Count * 72f + 4f);
+            List<RecordGroup> groups = BuildRecordGroups(frame, filteredIndices);
+            float viewHeight = CalculateRecordListHeight(groups);
+            Rect view = new Rect(0f, 0f, rect.width - 16f, viewHeight);
             m_RecordScroll = GUI.BeginScrollView(rect, m_RecordScroll, view);
-            for (int i = 0; i < filteredIndices.Count; i++)
+            float y = 0f;
+            for (int i = 0; i < groups.Count; i++)
             {
-                int recordIndex = filteredIndices[i];
-                DrawRecordRow(
-                    new Rect(0f, i * 72f, view.width, 64f),
-                    recordIndex,
-                    frame.Records[recordIndex]);
+                RecordGroup group = groups[i];
+                DrawRecordGroupHeader(new Rect(0f, y, view.width, RecordGroupHeaderHeight), group);
+                y += RecordGroupHeaderHeight + 6f;
+                for (int j = 0; j < group.Indices.Count; j++)
+                {
+                    int recordIndex = group.Indices[j];
+                    DrawRecordRow(
+                        new Rect(0f, y, view.width, RecordRowHeight - 8f),
+                        recordIndex,
+                        frame.Records[recordIndex]);
+                    y += RecordRowHeight;
+                }
+                y += 8f;
             }
             GUI.EndScrollView();
+        }
+
+        private static float CalculateRecordListHeight(List<RecordGroup> groups)
+        {
+            float height = 4f;
+            for (int i = 0; i < groups.Count; i++)
+                height += RecordGroupHeaderHeight + 14f + groups[i].Indices.Count * RecordRowHeight;
+            return Mathf.Max(height, 1f);
+        }
+
+        private static void DrawRecordGroupHeader(Rect rect, RecordGroup group)
+        {
+            EditorGUI.DrawRect(rect, new Color(0.15f, 0.15f, 0.15f));
+            GUI.Label(new Rect(rect.x + 8f, rect.y + 5f, rect.width * 0.62f, 16f), ShortText(group.Title, 34), EditorStyles.boldLabel);
+            InspectorStyleLibrary.DrawTailLabel(new Rect(rect.xMax - 92f, rect.y + 5f, 86f, 16f), group.Summary, TimelineRightLabel, false);
         }
 
         private void DrawRecordRow(Rect rect, int index, MatDataTransferTimelineRecord record)
@@ -203,27 +273,75 @@ namespace Rendering.MatDataTransfer.Editor
                 DrawRectOutline(rect, new Color(0.35f, 0.65f, 1f), 2f);
 
             EditorGUI.DrawRect(new Rect(rect.x + 10f, rect.y + 12f, 10f, 10f), StatusColor(record.Status));
-            GUI.Label(new Rect(rect.x + 28f, rect.y + 8f, 72f, 18f), "Seq " + record.Sequence, EditorStyles.boldLabel);
-            InspectorStyleLibrary.DrawTailLabel(new Rect(rect.x + 104f, rect.y + 9f, rect.width - 114f, 16f), record.Status.ToString(), TimelineLabel, false);
-            InspectorStyleLibrary.DrawTailLabel(new Rect(rect.x + 10f, rect.y + 32f, rect.width - 20f, 16f), Safe(record.Identity.SemanticKey), TimelineLabel, false);
-            InspectorStyleLibrary.DrawTailLabel(new Rect(rect.x + 10f, rect.y + 48f, rect.width - 20f, 16f), BuildInstanceLabel(record), TimelineLabel, true);
+            GUI.Label(new Rect(rect.x + 28f, rect.y + 8f, 74f, 18f), "Seq " + record.Sequence, EditorStyles.boldLabel);
+            InspectorStyleLibrary.DrawTailLabel(new Rect(rect.x + 112f, rect.y + 9f, rect.width - 122f, 16f), record.Status.ToString(), TimelineRightLabel, false);
+            InspectorStyleLibrary.DrawTailLabel(new Rect(rect.x + 10f, rect.y + 30f, rect.width - 20f, 16f), "Source: " + Safe(record.Identity.SourceId), TimelineLabel, true);
+            InspectorStyleLibrary.DrawTailLabel(new Rect(rect.x + 10f, rect.y + 48f, rect.width - 20f, 16f), "Key: " + Safe(record.Identity.SemanticKey) + " -> " + Safe(record.Binding.PropertyName), TimelineLabel, false);
 
             if (Event.current.type == EventType.MouseDown && rect.Contains(Event.current.mousePosition))
             {
-                SelectRecord(index, record);
+                if (selected)
+                    ClearSelectedRecord();
+                else
+                    SelectRecord(index, record);
                 Event.current.Use();
                 Repaint();
             }
         }
 
-        private static void DrawReplayHelp(Rect rect)
+        private void DrawRecordSummary(Rect rect)
         {
+            MatDataTransferTimelineFrame frame = GetSelectedFrame();
+            List<int> filtered = BuildFilteredRecordIndices(frame);
+            CountRecords(filtered, frame, out int applied, out int overridden, out int failed, out _);
+
             GUI.Box(rect, GUIContent.none, EditorStyles.helpBox);
-            GUI.Label(new Rect(rect.x + 10f, rect.y + 12f, rect.width - 20f, 18f), "Replay Meaning", EditorStyles.boldLabel);
-            GUI.Label(new Rect(rect.x + 10f, rect.y + 38f, rect.width - 20f, 16f), "Frame Offset 0: latest frame", InspectorStyleLibrary.Description);
-            GUI.Label(new Rect(rect.x + 10f, rect.y + 58f, rect.width - 20f, 16f), "Frame Offset 1: previous frame", InspectorStyleLibrary.Description);
-            GUI.Label(new Rect(rect.x + 10f, rect.y + 78f, rect.width - 20f, 16f), "Buffer drops frames > max limit", InspectorStyleLibrary.Description);
+            GUI.Label(new Rect(rect.x + 10f, rect.y + 8f, rect.width - 20f, 18f), filtered.Count + " matched", EditorStyles.boldLabel);
+            GUI.Label(
+                new Rect(rect.x + 10f, rect.y + 26f, rect.width - 20f, 16f),
+                (frame != null ? frame.Records.Count : 0) + " total / " + failed + " failed / " + applied + " applied / " + overridden + " overridden",
+                InspectorStyleLibrary.Description);
         }
 
+        private static void DrawQueryHelp(Rect rect)
+        {
+            GUI.Box(rect, GUIContent.none, EditorStyles.helpBox);
+            GUI.Label(new Rect(rect.x + 10f, rect.y + 8f, rect.width - 20f, 18f), "Query tips", InspectorStyleLibrary.Description);
+            GUI.Label(new Rect(rect.x + 10f, rect.y + 28f, rect.width - 20f, 16f), "key: source: status: code: msg: seq:", InspectorStyleLibrary.Description);
+        }
+
+        private static void CountRecords(
+            List<int> indices,
+            MatDataTransferTimelineFrame frame,
+            out int applied,
+            out int overridden,
+            out int failed,
+            out int rejected)
+        {
+            applied = 0;
+            overridden = 0;
+            failed = 0;
+            rejected = 0;
+            if (frame == null || indices == null)
+                return;
+
+            for (int i = 0; i < indices.Count; i++)
+            {
+                ParamWriteStatus status = frame.Records[indices[i]].Status;
+                if (status == ParamWriteStatus.Applied)
+                    applied++;
+                else if (status == ParamWriteStatus.Overridden)
+                    overridden++;
+                else if (status == ParamWriteStatus.Rejected)
+                {
+                    rejected++;
+                    failed++;
+                }
+                else if (status == ParamWriteStatus.WriterFailed)
+                {
+                    failed++;
+                }
+            }
+        }
     }
 }

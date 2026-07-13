@@ -10,15 +10,27 @@ namespace Rendering.MatDataTransfer.Editor
 
         private static GUIStyle s_TimelineButton;
         private static GUIStyle s_TimelineLabel;
+        private static GUIStyle s_TimelineWrappedLabel;
         private static GUIStyle s_TimelineRightLabel;
+        private static GUIStyle s_ToolbarSearchField;
         private static readonly Dictionary<int, Texture2D> s_RoundedTextureCache =
             new Dictionary<int, Texture2D>();
 
-        private static void DrawNode(Rect rect, string title, string[] body, Color accent, bool selected, string badge = null)
+        private static void DrawNode(
+            Rect rect,
+            string title,
+            string[] body,
+            Color accent,
+            bool selected,
+            string badge = null,
+            bool nested = false)
         {
-            EditorGUI.DrawRect(rect, selected ? new Color(0.24f, 0.28f, 0.33f) : new Color(0.22f, 0.25f, 0.28f));
+            Color fill = nested
+                ? new Color(0.18f, 0.21f, 0.24f)
+                : new Color(0.22f, 0.25f, 0.28f);
+            EditorGUI.DrawRect(rect, selected ? new Color(0.24f, 0.28f, 0.33f) : fill);
             GUI.Box(rect, GUIContent.none, EditorStyles.helpBox);
-            EditorGUI.DrawRect(new Rect(rect.x, rect.y, 5f, rect.height), accent);
+            EditorGUI.DrawRect(new Rect(rect.x, rect.y, nested ? 3f : 5f, rect.height), accent);
             if (selected)
                 DrawRectOutline(rect, new Color(0.35f, 0.65f, 1f), 2f);
 
@@ -34,14 +46,31 @@ namespace Rendering.MatDataTransfer.Editor
                 titleRect.width = Mathf.Max(0f, badgeRect.x - titleRect.x - 8f);
 
             InspectorStyleLibrary.DrawTailLabel(titleRect, title, EditorStyles.boldLabel, false);
+            float bodyY = rect.y + 34f;
             for (int i = 0; i < body.Length; i++)
             {
-                Rect bodyRect = new Rect(rect.x + 14f, rect.y + 34f + i * 18f, rect.width - 28f, 16f);
-                InspectorStyleLibrary.DrawTailLabel(bodyRect, body[i], TimelineLabel, false);
+                float lineHeight = CalculateWrappedLineHeight(body[i], rect.width - 28f);
+                Rect bodyRect = new Rect(rect.x + 14f, bodyY, rect.width - 28f, lineHeight);
+                GUI.Label(bodyRect, body[i], TimelineWrappedLabel);
+                bodyY += lineHeight + 4f;
             }
 
             if (!string.IsNullOrEmpty(badge))
                 DrawPayloadChip(badgeRect, badge, accent, selected);
+        }
+
+        private static float CalculateNodeHeight(TimelineGraphNode node, float width)
+        {
+            float height = 44f;
+            float bodyWidth = Mathf.Max(1f, width - 28f);
+            for (int i = 0; i < node.Lines.Count; i++)
+                height += CalculateWrappedLineHeight(node.Lines[i], bodyWidth) + 4f;
+            return Mathf.Max(DynamicNodeMinHeight, height + 6f);
+        }
+
+        private static float CalculateWrappedLineHeight(string text, float width)
+        {
+            return Mathf.Max(16f, TimelineWrappedLabel.CalcHeight(new GUIContent(text), Mathf.Max(1f, width)));
         }
 
         private static void DrawPayloadChip(Rect rect, string text, Color color, bool active)
@@ -55,13 +84,15 @@ namespace Rendering.MatDataTransfer.Editor
             InspectorStyleLibrary.DrawTailLabel(labelRect, text, TimelineLabel, false);
         }
 
-        private float DrawFilterChip(
+        private float DrawStatusChip(
             Rect rect,
             string text,
             Color color,
             TimelineStatusFilter filter)
         {
-            bool active = m_StatusFilter == filter;
+            bool active = filter == TimelineStatusFilter.All
+                ? m_StatusFilter == TimelineStatusFilter.All
+                : (m_StatusFilter & filter) != 0;
             Color previousColor = GUI.color;
             GUI.color = active ? Color.white : new Color(0.86f, 0.86f, 0.86f);
             bool clicked = DrawTimelineToggle(rect, active, text);
@@ -69,7 +100,7 @@ namespace Rendering.MatDataTransfer.Editor
 
             DrawFilterAccent(rect, color, active);
             if (clicked != active)
-                SetStatusFilter(active ? TimelineStatusFilter.All : filter);
+                ToggleStatusFilter(filter);
 
             return rect.width;
         }
@@ -79,12 +110,26 @@ namespace Rendering.MatDataTransfer.Editor
             EditorGUI.DrawRect(new Rect(rect.x + 6f, rect.y + rect.height * 0.5f - 3f, 6f, 6f), color);
         }
 
-        private void SetStatusFilter(TimelineStatusFilter filter)
+        private void ToggleStatusFilter(TimelineStatusFilter filter)
         {
-            if (m_StatusFilter == filter)
+            TimelineStatusFilter next;
+            if (filter == TimelineStatusFilter.All)
+            {
+                next = m_StatusFilter == TimelineStatusFilter.All
+                    ? TimelineStatusFilter.Rejected | TimelineStatusFilter.WriterFailed
+                    : TimelineStatusFilter.All;
+            }
+            else
+            {
+                next = m_StatusFilter ^ filter;
+                if (next == 0)
+                    next = filter;
+            }
+
+            if (m_StatusFilter == next)
                 return;
 
-            m_StatusFilter = filter;
+            m_StatusFilter = next;
             ClearSelectedRecord();
             m_RecordScroll = Vector2.zero;
             Repaint();
@@ -258,6 +303,39 @@ namespace Rendering.MatDataTransfer.Editor
                 }
 
                 return s_TimelineRightLabel;
+            }
+        }
+
+        private static GUIStyle TimelineWrappedLabel
+        {
+            get
+            {
+                if (s_TimelineWrappedLabel == null)
+                {
+                    s_TimelineWrappedLabel = new GUIStyle(InspectorStyleLibrary.Description)
+                    {
+                        alignment = TextAnchor.UpperLeft,
+                        clipping = TextClipping.Overflow,
+                        wordWrap = true
+                    };
+                }
+
+                return s_TimelineWrappedLabel;
+            }
+        }
+
+        private static GUIStyle ToolbarSearchField
+        {
+            get
+            {
+                if (s_ToolbarSearchField == null)
+                {
+                    s_ToolbarSearchField = GUI.skin.FindStyle("ToolbarSearchTextField")
+                        ?? GUI.skin.FindStyle("ToolbarSeachTextField")
+                        ?? EditorStyles.toolbarTextField;
+                }
+
+                return s_ToolbarSearchField;
             }
         }
 
