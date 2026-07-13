@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
@@ -7,26 +8,53 @@ namespace Rendering.MatDataTransfer.Editor
 {
     public sealed class MatDataTransferBindingEditor : EditorWindow
     {
-        private const float DefaultSidebarWidth = 360f;
-        private const float MinSidebarWidth = 260f;
-        private const float MinDetailWidth = 360f;
+        [Serializable]
+        private sealed class ShaderWorkspace
+        {
+            public Shader Shader;
+            public ShaderPropertyCatalog Catalog;
+        }
+
+        private const float DefaultShaderPaneWidth = 280f;
+        private const float DefaultPropertiesPaneWidth = 420f;
+        private const float MinShaderPaneWidth = 240f;
+        private const float MinPropertiesPaneWidth = 300f;
+        private const float MinDetailPaneWidth = 360f;
         private const float SplitterHitWidth = 8f;
         private const float SplitterLineWidth = 1f;
-        private const float MinWindowWidth = 760f;
-        private const float MinWindowHeight = 420f;
+        private const float LayoutHorizontalPadding = 8f;
+        private const float MinWindowHeight = 520f;
         private const float RowHeight = 24f;
         private const float DeleteButtonWidth = 24f;
         private const string DefaultConfigFolderName = "Configs";
 
-        private float m_SidebarWidth = DefaultSidebarWidth;
-        private ShaderPropertyCatalog m_Catalog;
-        private Shader m_Shader;
-        private MaterialSemanticKeyProfile m_SemanticKeyProfile;
+        [SerializeField] private float m_ShaderPaneWidth = DefaultShaderPaneWidth;
+        [SerializeField] private float m_PropertiesPaneWidth = DefaultPropertiesPaneWidth;
+        [SerializeField] private List<ShaderWorkspace> m_Workspaces = new List<ShaderWorkspace>();
+        [SerializeField] private int m_SelectedWorkspaceIndex = -1;
+        [SerializeField] private MaterialSemanticKeyProfile m_SemanticKeyProfile;
+
         private SerializedObject m_CatalogObject;
-        private Vector2 m_ListScroll;
+        private Vector2 m_ShaderScroll;
+        private Vector2 m_PropertyScroll;
         private Vector2 m_DetailScroll;
-        private int m_SelectedIndex = -1;
+        private int m_SelectedPropertyIndex = -1;
         private GUIStyle m_RowLabelStyle;
+
+        private float MinimumWindowWidth =>
+            MinShaderPaneWidth +
+            MinPropertiesPaneWidth +
+            MinDetailPaneWidth +
+            SplitterHitWidth * 2f +
+            LayoutHorizontalPadding;
+
+        private ShaderWorkspace ActiveWorkspace =>
+            m_SelectedWorkspaceIndex >= 0 && m_SelectedWorkspaceIndex < m_Workspaces.Count
+                ? m_Workspaces[m_SelectedWorkspaceIndex]
+                : null;
+
+        private Shader ActiveShader => ActiveWorkspace?.Shader;
+        private ShaderPropertyCatalog ActiveCatalog => ActiveWorkspace?.Catalog;
 
         [MenuItem("TA/角色模型工具/材质传输系统/MatDataTransfer Binding Editor")]
         private static void Open()
@@ -42,248 +70,324 @@ namespace Rendering.MatDataTransfer.Editor
 
         private void InitializeWindow(bool resizeToMinimum)
         {
-            minSize = new Vector2(MinWindowWidth, MinWindowHeight);
-            ClampSidebarWidth();
+            EnsureWorkspaceState();
+            minSize = new Vector2(MinimumWindowWidth, MinWindowHeight);
+            ClampColumnWidths();
 
             if (!resizeToMinimum)
                 return;
 
             Rect currentPosition = position;
-            currentPosition.width = MinWindowWidth;
-            currentPosition.height = MinWindowHeight;
+            currentPosition.width = Mathf.Max(currentPosition.width, MinimumWindowWidth);
+            currentPosition.height = Mathf.Max(currentPosition.height, MinWindowHeight);
             position = currentPosition;
         }
 
         private void OnGUI()
         {
+            EnsureWorkspaceState();
             DrawHeader();
-            DrawActions();
-            EditorGUILayout.Space(8);
+            EditorGUILayout.Space(6f);
 
             RefreshSerializedObject();
-            DrawCatalogEditor();
+            DrawThreeColumnEditor();
             ApplySerializedObject();
         }
 
         private void DrawHeader()
         {
             InspectorStyleLibrary.DrawTitle("Shader Property Catalog Editor");
-            EditorGUILayout.Space(4);
+            EditorGUILayout.Space(2f);
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField("Shader", InspectorStyleLibrary.ParameterName, GUILayout.Width(60));
-                m_Shader = (Shader)EditorGUILayout.ObjectField(
-                    m_Shader,
-                    typeof(Shader),
-                    false);
-            }
-
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                EditorGUILayout.LabelField("Catalog", InspectorStyleLibrary.ParameterName, GUILayout.Width(60));
-                ShaderPropertyCatalog selectedCatalog = (ShaderPropertyCatalog)EditorGUILayout.ObjectField(
-                    m_Catalog,
-                    typeof(ShaderPropertyCatalog),
-                    false);
-                SetCatalog(selectedCatalog);
-
-                if (m_Catalog != null && GUILayout.Button("Create New", GUILayout.Width(100)))
-                {
-                    AssignCreatedCatalog();
-                }
-                else if (m_Catalog == null && GUILayout.Button("Create Catalog", GUILayout.Width(120)))
-                {
-                    AssignCreatedCatalog();
-                }
-            }
-
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                EditorGUILayout.LabelField("Profile", InspectorStyleLibrary.ParameterName, GUILayout.Width(60));
+                EditorGUILayout.LabelField("Profile", InspectorStyleLibrary.ParameterName, GUILayout.Width(52f));
                 m_SemanticKeyProfile = (MaterialSemanticKeyProfile)EditorGUILayout.ObjectField(
                     m_SemanticKeyProfile,
                     typeof(MaterialSemanticKeyProfile),
                     false);
 
-                if (GUILayout.Button("Create Profile", GUILayout.Width(120)))
+                if (GUILayout.Button("Create Profile", GUILayout.Width(112f)))
                     AssignCreatedSemanticProfile();
             }
         }
 
-        private void DrawActions()
+        private void DrawThreeColumnEditor()
         {
-            using (new EditorGUILayout.HorizontalScope())
+            ClampColumnWidths();
+            SerializedProperty properties = m_CatalogObject?.FindProperty("properties");
+
+            using (new EditorGUILayout.HorizontalScope(GUILayout.ExpandHeight(true)))
             {
-                using (new EditorGUI.DisabledScope(m_Catalog == null || m_Shader == null))
-                {
-                    if (GUILayout.Button("1. Sync from Shader", GUILayout.Height(28)))
-                        SelectAndSyncShader();
-                }
-
-                using (new EditorGUI.DisabledScope(m_Catalog == null))
-                {
-                    if (GUILayout.Button("2. Export to Material Config", GUILayout.Height(28)))
-                        ExportToConfig();
-                }
-            }
-        }
-
-        private void DrawCatalogEditor()
-        {
-            if (m_CatalogObject == null)
-            {
-                EditorGUILayout.HelpBox("Create or assign a Shader Property Catalog to begin.", MessageType.Info);
-                return;
-            }
-
-            SerializedProperty properties = m_CatalogObject.FindProperty("properties");
-            if (properties == null)
-                return;
-
-            ClampSidebarWidth();
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                DrawListPane(properties);
-                DrawSplitter();
+                DrawShaderPane();
+                DrawSplitter(ColumnSplitter.Shaders);
+                DrawPropertiesPane(properties);
+                DrawSplitter(ColumnSplitter.Properties);
                 DrawDetailPane(properties);
             }
         }
 
-        private void DrawListPane(SerializedProperty list)
+        private void DrawShaderPane()
         {
-            using (new EditorGUILayout.VerticalScope(GUILayout.Width(m_SidebarWidth)))
+            using (new EditorGUILayout.VerticalScope(
+                       EditorStyles.helpBox,
+                       GUILayout.Width(m_ShaderPaneWidth),
+                       GUILayout.ExpandWidth(false),
+                       GUILayout.ExpandHeight(true)))
             {
-                DrawListHeader(list);
-                m_ListScroll = EditorGUILayout.BeginScrollView(m_ListScroll);
-                for (int i = 0; i < list.arraySize; i++)
-                    DrawListRow(list, i);
+                DrawShaderPaneHeader();
+                m_ShaderScroll = EditorGUILayout.BeginScrollView(m_ShaderScroll, GUILayout.ExpandHeight(true));
+                for (int i = 0; i < m_Workspaces.Count; i++)
+                    DrawShaderRow(i);
+                EditorGUILayout.EndScrollView();
+
+                DrawActiveWorkspaceEditor();
+            }
+        }
+
+        private void DrawShaderPaneHeader()
+        {
+            using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
+            {
+                EditorGUILayout.LabelField($"Shaders ({m_Workspaces.Count})", InspectorStyleLibrary.Title);
+                GUILayout.FlexibleSpace();
+
+                GUIContent addContent = new GUIContent(
+                    "+",
+                    "Add selected Shader assets. Adds an empty workspace when no Shader is selected.");
+                if (GUILayout.Button(addContent, EditorStyles.toolbarButton, GUILayout.Width(24f)))
+                    AddSelectedShaders();
+
+                using (new EditorGUI.DisabledScope(ActiveWorkspace == null))
+                {
+                    GUIContent removeContent = new GUIContent("-", "Remove the selected workspace.");
+                    if (GUILayout.Button(removeContent, EditorStyles.toolbarButton, GUILayout.Width(24f)))
+                        RemoveActiveWorkspace();
+                }
+            }
+        }
+
+        private void DrawShaderRow(int index)
+        {
+            ShaderWorkspace workspace = m_Workspaces[index];
+            Rect rowRect = EditorGUILayout.GetControlRect(false, RowHeight);
+            bool selected = m_SelectedWorkspaceIndex == index;
+
+            if (Event.current.type == EventType.Repaint)
+            {
+                Color background = selected
+                    ? new Color(0.24f, 0.48f, 0.9f, 0.75f)
+                    : new Color(1f, 1f, 1f, index % 2 == 0 ? 0.035f : 0.065f);
+                EditorGUI.DrawRect(rowRect, background);
+            }
+
+            Rect iconRect = new Rect(rowRect.x + 4f, rowRect.y + 3f, 18f, 18f);
+            Texture icon = EditorGUIUtility.ObjectContent(workspace?.Shader, typeof(Shader)).image;
+            if (icon != null)
+                GUI.DrawTexture(iconRect, icon, ScaleMode.ScaleToFit);
+
+            Rect labelRect = new Rect(rowRect.x + 26f, rowRect.y, rowRect.width - 30f, rowRect.height);
+            string label = BuildWorkspaceLabel(workspace, index);
+            GUI.Label(labelRect, new GUIContent(label, label), GetRowLabelStyle(selected));
+
+            HandleWorkspaceSelection(rowRect, index);
+        }
+
+        private static string BuildWorkspaceLabel(ShaderWorkspace workspace, int index)
+        {
+            if (workspace?.Shader != null)
+                return workspace.Shader.name;
+            if (workspace?.Catalog != null && !string.IsNullOrWhiteSpace(workspace.Catalog.ShaderName))
+                return workspace.Catalog.ShaderName;
+            return $"Shader {index + 1}";
+        }
+
+        private void HandleWorkspaceSelection(Rect rowRect, int index)
+        {
+            Event current = Event.current;
+            if (current.type != EventType.MouseDown || current.button != 0 || !rowRect.Contains(current.mousePosition))
+                return;
+
+            SelectWorkspace(index);
+            current.Use();
+        }
+
+        private void DrawActiveWorkspaceEditor()
+        {
+            EditorGUILayout.Space(4f);
+            if (ActiveWorkspace == null)
+            {
+                EditorGUILayout.HelpBox("Add or select a Shader workspace.", MessageType.Info);
+                return;
+            }
+
+            EditorGUILayout.LabelField("Selected Shader", InspectorStyleLibrary.Title);
+            EditorGUI.BeginChangeCheck();
+            Shader shader = (Shader)EditorGUILayout.ObjectField(
+                "Shader",
+                ActiveShader,
+                typeof(Shader),
+                false);
+            if (EditorGUI.EndChangeCheck())
+                SetActiveShader(shader);
+
+            EditorGUI.BeginChangeCheck();
+            ShaderPropertyCatalog catalog = (ShaderPropertyCatalog)EditorGUILayout.ObjectField(
+                "Catalog",
+                ActiveCatalog,
+                typeof(ShaderPropertyCatalog),
+                false);
+            if (EditorGUI.EndChangeCheck())
+                SetActiveCatalog(catalog);
+
+            DrawWorkspaceMismatchWarning();
+            DrawWorkspaceActions();
+        }
+
+        private void DrawWorkspaceMismatchWarning()
+        {
+            if (ActiveShader == null || ActiveCatalog == null || ActiveCatalog.Shader == null)
+                return;
+            if (ActiveCatalog.Shader == ActiveShader)
+                return;
+
+            EditorGUILayout.HelpBox(
+                "The Catalog belongs to another Shader. Syncing will rebind it to the selected Shader.",
+                MessageType.Warning);
+        }
+
+        private void DrawWorkspaceActions()
+        {
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                if (GUILayout.Button("Create Catalog", GUILayout.Height(24f)))
+                    AssignCreatedCatalog();
+
+                using (new EditorGUI.DisabledScope(ActiveCatalog == null || ActiveShader == null))
+                {
+                    if (GUILayout.Button("Sync", GUILayout.Width(64f), GUILayout.Height(24f)))
+                        SyncActiveWorkspace();
+                }
+            }
+
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                using (new EditorGUI.DisabledScope(!HasSyncableWorkspace()))
+                {
+                    if (GUILayout.Button("Sync All", GUILayout.Height(24f)))
+                        SyncAllWorkspaces();
+                }
+
+                using (new EditorGUI.DisabledScope(ActiveCatalog == null))
+                {
+                    if (GUILayout.Button("Export Config", GUILayout.Height(24f)))
+                        ExportActiveConfig();
+                }
+            }
+        }
+
+        private void DrawPropertiesPane(SerializedProperty properties)
+        {
+            using (new EditorGUILayout.VerticalScope(
+                       EditorStyles.helpBox,
+                       GUILayout.Width(m_PropertiesPaneWidth),
+                       GUILayout.ExpandWidth(false),
+                       GUILayout.ExpandHeight(true)))
+            {
+                DrawPropertiesHeader(properties);
+                if (properties == null)
+                {
+                    EditorGUILayout.HelpBox("Assign or create a Catalog for the selected Shader.", MessageType.Info);
+                    return;
+                }
+
+                m_PropertyScroll = EditorGUILayout.BeginScrollView(m_PropertyScroll);
+                for (int i = 0; i < properties.arraySize; i++)
+                    DrawPropertyRow(properties, i);
                 EditorGUILayout.EndScrollView();
             }
         }
 
-        private void DrawSplitter()
+        private void DrawPropertiesHeader(SerializedProperty properties)
         {
-            Rect rect = GUILayoutUtility.GetRect(
-                SplitterHitWidth,
-                SplitterHitWidth,
-                GUILayout.ExpandHeight(true));
-
-            int controlId = GUIUtility.GetControlID(FocusType.Passive);
-            Event current = Event.current;
-            EditorGUIUtility.AddCursorRect(rect, MouseCursor.ResizeHorizontal);
-
-            DrawSplitterLine(rect, GUIUtility.hotControl == controlId);
-
-            switch (current.GetTypeForControl(controlId))
-            {
-                case EventType.MouseDown:
-                    if (current.button == 0 && rect.Contains(current.mousePosition))
-                    {
-                        GUIUtility.hotControl = controlId;
-                        current.Use();
-                    }
-                    break;
-                case EventType.MouseDrag:
-                    if (GUIUtility.hotControl == controlId)
-                    {
-                        m_SidebarWidth += current.delta.x;
-                        ClampSidebarWidth();
-                        Repaint();
-                        current.Use();
-                    }
-                    break;
-                case EventType.MouseUp:
-                    if (GUIUtility.hotControl == controlId)
-                    {
-                        GUIUtility.hotControl = 0;
-                        current.Use();
-                    }
-                    break;
-            }
-        }
-
-        private static void DrawSplitterLine(Rect rect, bool active)
-        {
-            Color color = active
-                ? new Color(0.92f, 0.42f, 0.22f, 1f)
-                : new Color(0.18f, 0.18f, 0.18f, 1f);
-            float x = Mathf.Round(rect.center.x - SplitterLineWidth * 0.5f);
-            Rect lineRect = new Rect(x, rect.y, SplitterLineWidth, rect.height);
-            EditorGUI.DrawRect(lineRect, color);
-        }
-
-        private void ClampSidebarWidth()
-        {
-            float maxSidebarWidth = Mathf.Max(
-                MinSidebarWidth,
-                position.width - MinDetailWidth - SplitterHitWidth);
-            m_SidebarWidth = Mathf.Clamp(m_SidebarWidth, MinSidebarWidth, maxSidebarWidth);
-        }
-
-        private void DrawListHeader(SerializedProperty list)
-        {
+            int count = properties?.arraySize ?? 0;
             using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
             {
-                EditorGUILayout.LabelField($"Properties ({list.arraySize})", InspectorStyleLibrary.Title);
+                EditorGUILayout.LabelField($"Properties ({count})", InspectorStyleLibrary.Title);
                 GUILayout.FlexibleSpace();
-                if (GUILayout.Button("Clear Missing", EditorStyles.toolbarButton, GUILayout.Width(96f)))
-                    ClearMissingProperties(list);
+                using (new EditorGUI.DisabledScope(properties == null))
+                {
+                    if (GUILayout.Button("Clear Missing", EditorStyles.toolbarButton, GUILayout.Width(96f)))
+                        ClearMissingProperties(properties);
+                }
             }
         }
 
-        private void DrawListRow(SerializedProperty list, int index)
+        private void DrawPropertyRow(SerializedProperty list, int index)
         {
             SerializedProperty element = list.GetArrayElementAtIndex(index);
             Rect rowRect = EditorGUILayout.GetControlRect(false, RowHeight);
-            bool selected = m_SelectedIndex == index;
+            bool selected = m_SelectedPropertyIndex == index;
 
             if (Event.current.type == EventType.Repaint)
-                DrawRowBackground(rowRect, selected, element);
+                DrawPropertyRowBackground(rowRect, selected, element);
 
-            Rect labelRect = new Rect(rowRect.x + 6f, rowRect.y, rowRect.width - DeleteButtonWidth - 8f, rowRect.height);
-            GUI.Label(labelRect, BuildRowLabel(element), GetRowLabelStyle(selected));
+            Rect labelRect = new Rect(
+                rowRect.x + 6f,
+                rowRect.y,
+                rowRect.width - DeleteButtonWidth - 8f,
+                rowRect.height);
+            GUI.Label(labelRect, BuildPropertyRowLabel(element), GetRowLabelStyle(selected));
 
-            Rect deleteRect = new Rect(rowRect.xMax - DeleteButtonWidth, rowRect.y + 2f, DeleteButtonWidth - 4f, RowHeight - 4f);
+            Rect deleteRect = new Rect(
+                rowRect.xMax - DeleteButtonWidth,
+                rowRect.y + 2f,
+                DeleteButtonWidth - 4f,
+                RowHeight - 4f);
             if (GUI.Button(deleteRect, "×", EditorStyles.miniButton))
             {
                 list.DeleteArrayElementAtIndex(index);
-                if (m_SelectedIndex == index)
-                    m_SelectedIndex = -1;
+                if (m_SelectedPropertyIndex == index)
+                    m_SelectedPropertyIndex = -1;
+                else if (m_SelectedPropertyIndex > index)
+                    m_SelectedPropertyIndex--;
+
                 ApplySerializedObject();
                 GUIUtility.ExitGUI();
             }
 
             Rect selectRect = new Rect(rowRect.x, rowRect.y, rowRect.width - DeleteButtonWidth, rowRect.height);
-            HandleRowSelection(selectRect, index);
+            HandlePropertySelection(selectRect, index);
         }
 
-        private void DrawRowBackground(Rect rect, bool selected, SerializedProperty element)
+        private static void DrawPropertyRowBackground(
+            Rect rect,
+            bool selected,
+            SerializedProperty element)
         {
             Color color = selected
                 ? new Color(0.24f, 0.48f, 0.9f, 0.75f)
-                : GetRowBackgroundColor(element);
+                : GetPropertyRowBackgroundColor(element);
             EditorGUI.DrawRect(rect, color);
         }
 
-        private Color GetRowBackgroundColor(SerializedProperty element)
+        private static Color GetPropertyRowBackgroundColor(SerializedProperty element)
         {
             SerializedProperty status = element.FindPropertyRelative("Status");
-            if (status != null)
-            {
-                CatalogPropertyStatus statusValue = (CatalogPropertyStatus)status.enumValueIndex;
-                switch (statusValue)
-                {
-                    case CatalogPropertyStatus.Missing:
-                        return new Color(0.72f, 0.18f, 0.16f, 0.4f);
-                    case CatalogPropertyStatus.New:
-                        return new Color(0.95f, 0.62f, 0.12f, 0.35f);
-                    case CatalogPropertyStatus.Ok:
-                        return new Color(0.13f, 0.52f, 0.28f, 0.23f);
-                }
-            }
+            if (status == null)
+                return new Color(1f, 1f, 1f, 0.03f);
 
-            return new Color(1f, 1f, 1f, 0.03f);
+            switch ((CatalogPropertyStatus)status.enumValueIndex)
+            {
+                case CatalogPropertyStatus.Missing:
+                    return new Color(0.72f, 0.18f, 0.16f, 0.4f);
+                case CatalogPropertyStatus.New:
+                    return new Color(0.95f, 0.62f, 0.12f, 0.35f);
+                case CatalogPropertyStatus.Ok:
+                    return new Color(0.13f, 0.52f, 0.28f, 0.23f);
+                default:
+                    return new Color(1f, 1f, 1f, 0.03f);
+            }
         }
 
         private GUIStyle GetRowLabelStyle(bool selected)
@@ -303,62 +407,65 @@ namespace Rendering.MatDataTransfer.Editor
             return m_RowLabelStyle;
         }
 
-        private string BuildRowLabel(SerializedProperty element)
+        private static string BuildPropertyRowLabel(SerializedProperty element)
         {
             SerializedProperty propertyInfo = element.FindPropertyRelative("PropertyInfo");
             SerializedProperty semanticKey = element.FindPropertyRelative("SuggestedSemanticKey");
             SerializedProperty status = element.FindPropertyRelative("Status");
 
             string displayName = GetString(propertyInfo, "InspectorDisplayName");
-            string key = semanticKey != null ? semanticKey.stringValue : "";
-            string statusStr = status != null ? GetStatusIcon(status.enumValueIndex) : "";
-
-            return $"{statusStr} {displayName}  →  {key}";
+            string key = semanticKey != null ? semanticKey.stringValue : string.Empty;
+            string statusText = status != null ? GetStatusIcon(status.enumValueIndex) : string.Empty;
+            return $"{statusText} {displayName}  →  {key}";
         }
 
-        private string GetStatusIcon(int statusIndex)
+        private static string GetStatusIcon(int statusIndex)
         {
             switch ((CatalogPropertyStatus)statusIndex)
             {
-                case CatalogPropertyStatus.Ok: return "✓";
-                case CatalogPropertyStatus.New: return "★";
-                case CatalogPropertyStatus.Missing: return "✗";
-                default: return "";
+                case CatalogPropertyStatus.Ok:
+                    return "✓";
+                case CatalogPropertyStatus.New:
+                    return "★";
+                case CatalogPropertyStatus.Missing:
+                    return "✗";
+                default:
+                    return string.Empty;
             }
         }
 
-        private void HandleRowSelection(Rect rowRect, int index)
+        private void HandlePropertySelection(Rect rowRect, int index)
         {
             Event current = Event.current;
             if (current.type != EventType.MouseDown || current.button != 0 || !rowRect.Contains(current.mousePosition))
                 return;
 
-            m_SelectedIndex = index;
+            m_SelectedPropertyIndex = index;
             current.Use();
         }
 
-        private void DrawDetailPane(SerializedProperty list)
+        private void DrawDetailPane(SerializedProperty properties)
         {
-            using (new EditorGUILayout.VerticalScope())
+            using (new EditorGUILayout.VerticalScope(
+                       EditorStyles.helpBox,
+                       GUILayout.MinWidth(MinDetailPaneWidth),
+                       GUILayout.ExpandWidth(true),
+                       GUILayout.ExpandHeight(true)))
             {
-                DrawDetailHeader();
-                if (m_SelectedIndex < 0 || m_SelectedIndex >= list.arraySize)
+                using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
+                    EditorGUILayout.LabelField("Property Details", InspectorStyleLibrary.Title);
+
+                if (properties == null ||
+                    m_SelectedPropertyIndex < 0 ||
+                    m_SelectedPropertyIndex >= properties.arraySize)
                 {
                     EditorGUILayout.HelpBox("Select a property to edit its semantic key.", MessageType.Info);
                     return;
                 }
 
                 m_DetailScroll = EditorGUILayout.BeginScrollView(m_DetailScroll);
-                DrawPropertyDetail(list.GetArrayElementAtIndex(m_SelectedIndex));
+                DrawPropertyDetail(properties.GetArrayElementAtIndex(m_SelectedPropertyIndex));
                 EditorGUILayout.EndScrollView();
-            }
-        }
-
-        private void DrawDetailHeader()
-        {
-            using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
-            {
-                EditorGUILayout.LabelField("Property Details", InspectorStyleLibrary.Title);
             }
         }
 
@@ -366,17 +473,18 @@ namespace Rendering.MatDataTransfer.Editor
         {
             SerializedProperty propertyInfo = property.FindPropertyRelative("PropertyInfo");
             SerializedProperty semanticKey = property.FindPropertyRelative("SuggestedSemanticKey");
-            SerializedProperty status = property.FindPropertyRelative("Status");
 
-            EditorGUILayout.Space(8);
+            EditorGUILayout.Space(8f);
             InspectorStyleLibrary.DrawCopyableParameterValue(
                 "Display Name",
                 GetString(propertyInfo, "InspectorDisplayName"));
-            InspectorStyleLibrary.DrawCopyableParameterValue("Property Name", GetString(propertyInfo, "PropertyName"));
+            InspectorStyleLibrary.DrawCopyableParameterValue(
+                "Property Name",
+                GetString(propertyInfo, "PropertyName"));
             DrawReadOnlyEnum(propertyInfo, "ValueType", "Value Type");
             DrawReadOnlyEnum(property, "Status", "Status");
 
-            EditorGUILayout.Space(12);
+            EditorGUILayout.Space(12f);
             EditorGUILayout.PropertyField(semanticKey, new GUIContent("Semantic Key"));
             EditorGUILayout.HelpBox(
                 "Semantic Key is the unique identifier used by business code to reference this property.",
@@ -385,52 +493,245 @@ namespace Rendering.MatDataTransfer.Editor
             DrawSemanticProfilePreview(propertyInfo);
         }
 
-        private void ClearMissingProperties(SerializedProperty list)
+        private enum ColumnSplitter
         {
-            for (int i = list.arraySize - 1; i >= 0; i--)
-            {
-                SerializedProperty element = list.GetArrayElementAtIndex(i);
-                SerializedProperty status = element.FindPropertyRelative("Status");
-                if (status != null && status.enumValueIndex == (int)CatalogPropertyStatus.Missing)
-                {
-                    list.DeleteArrayElementAtIndex(i);
-                    if (m_SelectedIndex == i)
-                        m_SelectedIndex = -1;
-                }
-            }
-
-            ApplySerializedObject();
+            Shaders,
+            Properties
         }
 
-        private void SelectAndSyncShader()
+        private void DrawSplitter(ColumnSplitter splitter)
         {
-            if (m_Catalog == null)
+            Rect rect = GUILayoutUtility.GetRect(
+                SplitterHitWidth,
+                SplitterHitWidth,
+                GUILayout.ExpandWidth(false),
+                GUILayout.ExpandHeight(true));
+
+            int controlId = GUIUtility.GetControlID(FocusType.Passive);
+            Event current = Event.current;
+            EditorGUIUtility.AddCursorRect(rect, MouseCursor.ResizeHorizontal);
+            DrawSplitterLine(rect, GUIUtility.hotControl == controlId);
+
+            switch (current.GetTypeForControl(controlId))
             {
-                return;
+                case EventType.MouseDown:
+                    if (current.button == 0 && rect.Contains(current.mousePosition))
+                    {
+                        GUIUtility.hotControl = controlId;
+                        current.Use();
+                    }
+                    break;
+                case EventType.MouseDrag:
+                    if (GUIUtility.hotControl == controlId)
+                    {
+                        ResizeColumn(splitter, current.delta.x);
+                        Repaint();
+                        current.Use();
+                    }
+                    break;
+                case EventType.MouseUp:
+                    if (GUIUtility.hotControl == controlId)
+                    {
+                        GUIUtility.hotControl = 0;
+                        current.Use();
+                    }
+                    break;
+            }
+        }
+
+        private void ResizeColumn(ColumnSplitter splitter, float delta)
+        {
+            if (splitter == ColumnSplitter.Shaders)
+                m_ShaderPaneWidth += delta;
+            else
+                m_PropertiesPaneWidth += delta;
+
+            ClampColumnWidths();
+        }
+
+        private static void DrawSplitterLine(Rect rect, bool active)
+        {
+            Color color = active
+                ? new Color(0.92f, 0.42f, 0.22f, 1f)
+                : new Color(0.18f, 0.18f, 0.18f, 1f);
+            float x = Mathf.Round(rect.center.x - SplitterLineWidth * 0.5f);
+            EditorGUI.DrawRect(new Rect(x, rect.y, SplitterLineWidth, rect.height), color);
+        }
+
+        private void ClampColumnWidths()
+        {
+            float availableWidth = Mathf.Max(MinimumWindowWidth, position.width) -
+                                   SplitterHitWidth * 2f -
+                                   LayoutHorizontalPadding;
+
+            float maxShaderWidth = availableWidth - MinPropertiesPaneWidth - MinDetailPaneWidth;
+            m_ShaderPaneWidth = Mathf.Clamp(m_ShaderPaneWidth, MinShaderPaneWidth, maxShaderWidth);
+
+            float maxPropertiesWidth = availableWidth - m_ShaderPaneWidth - MinDetailPaneWidth;
+            m_PropertiesPaneWidth = Mathf.Clamp(
+                m_PropertiesPaneWidth,
+                MinPropertiesPaneWidth,
+                maxPropertiesWidth);
+        }
+
+        private void AddSelectedShaders()
+        {
+            bool added = false;
+            UnityEngine.Object[] selectedObjects = Selection.objects;
+            for (int i = 0; i < selectedObjects.Length; i++)
+            {
+                Shader shader = selectedObjects[i] as Shader;
+                if (shader == null)
+                    continue;
+
+                int existingIndex = FindWorkspace(shader);
+                if (existingIndex >= 0)
+                {
+                    SelectWorkspace(existingIndex);
+                    continue;
+                }
+
+                m_Workspaces.Add(new ShaderWorkspace { Shader = shader });
+                SelectWorkspace(m_Workspaces.Count - 1);
+                added = true;
             }
 
-            if (m_Shader == null)
+            if (!added && !HasSelectedShaderAsset())
             {
-                return;
+                m_Workspaces.Add(new ShaderWorkspace());
+                SelectWorkspace(m_Workspaces.Count - 1);
+            }
+        }
+
+        private static bool HasSelectedShaderAsset()
+        {
+            UnityEngine.Object[] selectedObjects = Selection.objects;
+            for (int i = 0; i < selectedObjects.Length; i++)
+            {
+                if (selectedObjects[i] is Shader)
+                    return true;
             }
 
-            ShaderPropertyCatalogBuilder.SyncCatalog(m_Catalog, m_Shader, m_SemanticKeyProfile);
-            m_CatalogObject = null;
-            EditorUtility.SetDirty(m_Catalog);
+            return false;
+        }
+
+        private int FindWorkspace(Shader shader)
+        {
+            for (int i = 0; i < m_Workspaces.Count; i++)
+            {
+                if (m_Workspaces[i]?.Shader == shader)
+                    return i;
+            }
+
+            return -1;
+        }
+
+        private void RemoveActiveWorkspace()
+        {
+            if (ActiveWorkspace == null)
+                return;
+
+            ApplySerializedObject();
+            int removedIndex = m_SelectedWorkspaceIndex;
+            m_Workspaces.RemoveAt(m_SelectedWorkspaceIndex);
+            m_SelectedWorkspaceIndex = Mathf.Min(removedIndex, m_Workspaces.Count - 1);
+            ResetCatalogEditorState();
+        }
+
+        private void SelectWorkspace(int index)
+        {
+            index = Mathf.Clamp(index, -1, m_Workspaces.Count - 1);
+            if (m_SelectedWorkspaceIndex == index)
+                return;
+
+            ApplySerializedObject();
+            m_SelectedWorkspaceIndex = index;
+            ResetCatalogEditorState();
+        }
+
+        private void SetActiveShader(Shader shader)
+        {
+            ShaderWorkspace workspace = ActiveWorkspace;
+            if (workspace == null || workspace.Shader == shader)
+                return;
+
+            workspace.Shader = shader;
+            if (workspace.Catalog != null && workspace.Catalog.Shader != null && workspace.Catalog.Shader != shader)
+                workspace.Catalog = null;
+
+            ResetCatalogEditorState();
+        }
+
+        private void SetActiveCatalog(ShaderPropertyCatalog catalog)
+        {
+            ShaderWorkspace workspace = ActiveWorkspace;
+            if (workspace == null || workspace.Catalog == catalog)
+                return;
+
+            ApplySerializedObject();
+            workspace.Catalog = catalog;
+            if (catalog?.Shader != null)
+                workspace.Shader = catalog.Shader;
+
+            ResetCatalogEditorState();
+        }
+
+        private bool HasSyncableWorkspace()
+        {
+            for (int i = 0; i < m_Workspaces.Count; i++)
+            {
+                ShaderWorkspace workspace = m_Workspaces[i];
+                if (workspace?.Shader != null && workspace.Catalog != null)
+                    return true;
+            }
+
+            return false;
+        }
+
+        private void SyncActiveWorkspace()
+        {
+            if (!SyncWorkspace(ActiveWorkspace))
+                return;
+
+            ResetCatalogEditorState();
             AssetDatabase.SaveAssets();
         }
 
-        private void ExportToConfig()
+        private void SyncAllWorkspaces()
         {
-            if (m_Catalog == null)
-            {
+            ApplySerializedObject();
+            bool changed = false;
+            for (int i = 0; i < m_Workspaces.Count; i++)
+                changed |= SyncWorkspace(m_Workspaces[i]);
+
+            if (!changed)
                 return;
-            }
+
+            ResetCatalogEditorState();
+            AssetDatabase.SaveAssets();
+        }
+
+        private bool SyncWorkspace(ShaderWorkspace workspace)
+        {
+            if (workspace?.Catalog == null || workspace.Shader == null)
+                return false;
+
+            ShaderPropertyCatalogBuilder.SyncCatalog(
+                workspace.Catalog,
+                workspace.Shader,
+                m_SemanticKeyProfile);
+            EditorUtility.SetDirty(workspace.Catalog);
+            return true;
+        }
+
+        private void ExportActiveConfig()
+        {
+            if (ActiveCatalog == null)
+                return;
 
             MaterialParamConfig config = ScriptableObject.CreateInstance<MaterialParamConfig>();
-            List<MaterialParameter> parameters = BuildMaterialParameters();
-            config.SetDefaultShaderName(GetCatalogShaderName());
-            config.SetParameters(parameters);
+            config.SetDefaultShaderName(GetActiveCatalogShaderName());
+            config.SetParameters(BuildMaterialParameters(ActiveCatalog));
 
             string path = BuildUniqueConfigAssetPath(BuildDefaultConfigAssetName());
             AssetDatabase.CreateAsset(config, path);
@@ -438,81 +739,110 @@ namespace Rendering.MatDataTransfer.Editor
             EditorGUIUtility.PingObject(config);
         }
 
-        private List<MaterialParameter> BuildMaterialParameters()
+        private static List<MaterialParameter> BuildMaterialParameters(ShaderPropertyCatalog catalog)
         {
             List<MaterialParameter> parameters = new List<MaterialParameter>();
-            if (m_Catalog == null || m_Catalog.Properties == null)
+            if (catalog?.Properties == null)
                 return parameters;
 
-            foreach (var catalogProp in m_Catalog.Properties)
+            foreach (CatalogProperty catalogProperty in catalog.Properties)
             {
-                if (catalogProp == null || catalogProp.Status != CatalogPropertyStatus.Ok)
+                if (catalogProperty == null || catalogProperty.Status != CatalogPropertyStatus.Ok)
                     continue;
-                if (catalogProp.PropertyInfo == null)
+                if (catalogProperty.PropertyInfo == null)
                     continue;
 
-                MaterialParameter param = new MaterialParameter(
-                    catalogProp.SuggestedSemanticKey,
-                    catalogProp.PropertyInfo.ValueType,
-                    catalogProp.PropertyInfo.DefaultValue);
-
-                parameters.Add(param);
+                parameters.Add(new MaterialParameter(
+                    catalogProperty.SuggestedSemanticKey,
+                    catalogProperty.PropertyInfo.ValueType,
+                    catalogProperty.PropertyInfo.DefaultValue));
             }
 
             return parameters;
         }
 
-        private string GetCatalogShaderName()
+        private void ClearMissingProperties(SerializedProperty list)
         {
-            if (m_Catalog == null)
-                return string.Empty;
+            for (int i = list.arraySize - 1; i >= 0; i--)
+            {
+                SerializedProperty element = list.GetArrayElementAtIndex(i);
+                SerializedProperty status = element.FindPropertyRelative("Status");
+                if (status == null || status.enumValueIndex != (int)CatalogPropertyStatus.Missing)
+                    continue;
 
-            if (!string.IsNullOrWhiteSpace(m_Catalog.ShaderName))
-                return m_Catalog.ShaderName;
+                list.DeleteArrayElementAtIndex(i);
+                if (m_SelectedPropertyIndex == i)
+                    m_SelectedPropertyIndex = -1;
+                else if (m_SelectedPropertyIndex > i)
+                    m_SelectedPropertyIndex--;
+            }
 
-            return m_Catalog.Shader != null ? m_Catalog.Shader.name : string.Empty;
+            ApplySerializedObject();
         }
 
         private void RefreshSerializedObject()
         {
-            if (m_Catalog == null)
+            ShaderPropertyCatalog catalog = ActiveCatalog;
+            if (catalog == null)
             {
                 m_CatalogObject = null;
                 return;
             }
 
-            if (m_CatalogObject == null || m_CatalogObject.targetObject != m_Catalog)
-                m_CatalogObject = new SerializedObject(m_Catalog);
+            if (m_CatalogObject == null || m_CatalogObject.targetObject != catalog)
+                m_CatalogObject = new SerializedObject(catalog);
 
             m_CatalogObject.Update();
         }
 
-        private void SetCatalog(ShaderPropertyCatalog catalog)
+        private void ApplySerializedObject()
         {
-            if (m_Catalog == catalog)
-                return;
-
-            m_Catalog = catalog;
-            ResetCatalogEditorState();
-            m_Shader = m_Catalog != null ? m_Catalog.Shader : null;
+            if (m_CatalogObject != null && m_CatalogObject.ApplyModifiedProperties())
+                EditorUtility.SetDirty(m_CatalogObject.targetObject);
         }
 
-        private string BuildDefaultConfigAssetName()
+        private void ResetCatalogEditorState()
         {
-            string shaderFileName = SanitizeAssetFileName(GetSelectedShaderName());
-            return string.IsNullOrEmpty(shaderFileName)
-                ? "MaterialParamConfig"
-                : shaderFileName + "_MaterialParamConfig";
+            m_CatalogObject = null;
+            m_SelectedPropertyIndex = -1;
+            m_PropertyScroll = Vector2.zero;
+            m_DetailScroll = Vector2.zero;
+        }
+
+        private void EnsureWorkspaceState()
+        {
+            if (m_Workspaces == null)
+                m_Workspaces = new List<ShaderWorkspace>();
+
+            for (int i = m_Workspaces.Count - 1; i >= 0; i--)
+            {
+                if (m_Workspaces[i] == null)
+                    m_Workspaces[i] = new ShaderWorkspace();
+            }
+
+            m_SelectedWorkspaceIndex = Mathf.Clamp(
+                m_SelectedWorkspaceIndex,
+                -1,
+                m_Workspaces.Count - 1);
         }
 
         private void AssignCreatedCatalog()
         {
+            ShaderWorkspace workspace = ActiveWorkspace;
+            if (workspace == null)
+                return;
+
             ShaderPropertyCatalog createdCatalog = CreateCatalog(GetSelectedShaderName());
             if (createdCatalog == null)
                 return;
 
-            m_Catalog = createdCatalog;
+            workspace.Catalog = createdCatalog;
+            if (workspace.Shader != null)
+                createdCatalog.SetShader(workspace.Shader);
+            EditorUtility.SetDirty(createdCatalog);
+            AssetDatabase.SaveAssets();
             ResetCatalogEditorState();
+            EditorGUIUtility.PingObject(createdCatalog);
         }
 
         private void AssignCreatedSemanticProfile()
@@ -523,45 +853,6 @@ namespace Rendering.MatDataTransfer.Editor
 
             m_SemanticKeyProfile = createdProfile;
             EditorGUIUtility.PingObject(createdProfile);
-        }
-
-        private void ResetCatalogEditorState()
-        {
-            m_CatalogObject = null;
-            m_SelectedIndex = -1;
-            m_ListScroll = Vector2.zero;
-            m_DetailScroll = Vector2.zero;
-        }
-
-        private void ApplySerializedObject()
-        {
-            if (m_CatalogObject != null && m_CatalogObject.ApplyModifiedProperties())
-            {
-                EditorUtility.SetDirty(m_CatalogObject.targetObject);
-            }
-        }
-
-        private static void DrawReadOnlyEnum(SerializedProperty property, string relativeName, string label)
-        {
-            SerializedProperty child = property.FindPropertyRelative(relativeName);
-            string value = child != null && child.enumValueIndex >= 0 && child.enumValueIndex < child.enumDisplayNames.Length
-                ? child.enumDisplayNames[child.enumValueIndex]
-                : string.Empty;
-            InspectorStyleLibrary.DrawParameterValue(label, value);
-        }
-
-        private static string GetString(SerializedProperty property, string name)
-        {
-            SerializedProperty child = property?.FindPropertyRelative(name);
-            return child != null ? child.stringValue : string.Empty;
-        }
-
-        private string GetSelectedShaderName()
-        {
-            if (m_Shader != null)
-                return m_Shader.name;
-
-            return GetCatalogShaderName();
         }
 
         private ShaderPropertyCatalog CreateCatalog(string shaderName)
@@ -615,11 +906,11 @@ namespace Rendering.MatDataTransfer.Editor
             {
                 EditorUtility.CopySerialized(asset, existingAsset);
                 EditorUtility.SetDirty(existingAsset);
-                Object.DestroyImmediate(asset);
+                UnityEngine.Object.DestroyImmediate(asset);
                 return existingAsset;
             }
 
-            if (AssetDatabase.LoadAssetAtPath<Object>(path) != null)
+            if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path) != null)
                 AssetDatabase.DeleteAsset(path);
 
             AssetDatabase.CreateAsset(asset, path);
@@ -681,7 +972,7 @@ namespace Rendering.MatDataTransfer.Editor
                 ? path.Substring(slashIndex + 1)
                 : path;
 
-            return string.Equals(currentFolder, folderName, System.StringComparison.Ordinal);
+            return string.Equals(currentFolder, folderName, StringComparison.Ordinal);
         }
 
         private static string BuildDefaultCatalogAssetName(string shaderName)
@@ -695,6 +986,33 @@ namespace Rendering.MatDataTransfer.Editor
         private static string BuildDefaultProfileAssetName()
         {
             return "MaterialSemanticKeyProfile";
+        }
+
+        private string BuildDefaultConfigAssetName()
+        {
+            string shaderFileName = SanitizeAssetFileName(GetSelectedShaderName());
+            return string.IsNullOrEmpty(shaderFileName)
+                ? "MaterialParamConfig"
+                : shaderFileName + "_MaterialParamConfig";
+        }
+
+        private string GetSelectedShaderName()
+        {
+            if (ActiveShader != null)
+                return ActiveShader.name;
+
+            return GetActiveCatalogShaderName();
+        }
+
+        private string GetActiveCatalogShaderName()
+        {
+            ShaderPropertyCatalog catalog = ActiveCatalog;
+            if (catalog == null)
+                return string.Empty;
+            if (!string.IsNullOrWhiteSpace(catalog.ShaderName))
+                return catalog.ShaderName;
+
+            return catalog.Shader != null ? catalog.Shader.name : string.Empty;
         }
 
         private void DrawSemanticProfilePreview(SerializedProperty propertyInfo)
@@ -716,7 +1034,7 @@ namespace Rendering.MatDataTransfer.Editor
                 out string semanticKey,
                 warnings);
 
-            EditorGUILayout.Space(8);
+            EditorGUILayout.Space(8f);
             InspectorStyleLibrary.DrawParameterValue(
                 "Profile Match",
                 matched ? semanticKey : "<none>");
@@ -725,13 +1043,29 @@ namespace Rendering.MatDataTransfer.Editor
                 EditorGUILayout.HelpBox(warnings[i], MessageType.Warning);
         }
 
+        private static void DrawReadOnlyEnum(SerializedProperty property, string relativeName, string label)
+        {
+            SerializedProperty child = property?.FindPropertyRelative(relativeName);
+            string value = child != null &&
+                           child.enumValueIndex >= 0 &&
+                           child.enumValueIndex < child.enumDisplayNames.Length
+                ? child.enumDisplayNames[child.enumValueIndex]
+                : string.Empty;
+            InspectorStyleLibrary.DrawParameterValue(label, value);
+        }
+
+        private static string GetString(SerializedProperty property, string name)
+        {
+            SerializedProperty child = property?.FindPropertyRelative(name);
+            return child != null ? child.stringValue : string.Empty;
+        }
+
         private static ParamValueType GetParamValueType(SerializedProperty propertyInfo)
         {
             SerializedProperty valueType = propertyInfo.FindPropertyRelative("ValueType");
-            if (valueType == null)
-                return ParamValueType.Float;
-
-            return (ParamValueType)valueType.enumValueIndex;
+            return valueType != null
+                ? (ParamValueType)valueType.enumValueIndex
+                : ParamValueType.Float;
         }
 
         private static string SanitizeAssetFileName(string value)
