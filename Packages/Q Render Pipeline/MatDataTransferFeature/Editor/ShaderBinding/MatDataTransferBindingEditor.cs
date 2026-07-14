@@ -30,6 +30,107 @@ namespace Rendering.MatDataTransfer.Editor
             public string SemanticKeyProfileId;
         }
 
+        private sealed class ProfilePropertyEntry
+        {
+            public string PropertyName;
+            public string DisplayName;
+            public ParamValueType ValueType;
+            public string SemanticKey;
+            public readonly List<string> ShaderNames = new List<string>();
+        }
+
+        private sealed class SemanticKeyInputWindow : EditorWindow
+        {
+            private const float RowHeight = 96f;
+
+            private List<ProfilePropertyEntry> m_Entries;
+            private Action<List<ProfilePropertyEntry>> m_OnConfirm;
+            private Vector2 m_Scroll;
+
+            public static void Open(
+                List<ProfilePropertyEntry> entries,
+                Action<List<ProfilePropertyEntry>> onConfirm)
+            {
+                SemanticKeyInputWindow window = CreateInstance<SemanticKeyInputWindow>();
+                window.titleContent = new GUIContent("Set Semantic Keys");
+                window.m_Entries = entries;
+                window.m_OnConfirm = onConfirm;
+                window.minSize = new Vector2(520f, 260f);
+                window.position = BuildCenteredPosition(window.minSize);
+                window.ShowUtility();
+            }
+
+            private void OnGUI()
+            {
+                EditorGUILayout.LabelField("Properties", InspectorStyleLibrary.Title);
+                EditorGUILayout.Space(4f);
+
+                m_Scroll = EditorGUILayout.BeginScrollView(m_Scroll);
+                if (m_Entries != null)
+                {
+                    for (int i = 0; i < m_Entries.Count; i++)
+                        DrawEntry(m_Entries[i], i);
+                }
+                EditorGUILayout.EndScrollView();
+
+                EditorGUILayout.Space(6f);
+                DrawActions();
+            }
+
+            private static void DrawEntry(ProfilePropertyEntry entry, int index)
+            {
+                using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox, GUILayout.MinHeight(RowHeight)))
+                {
+                    string displayName = string.IsNullOrWhiteSpace(entry.DisplayName)
+                        ? entry.PropertyName
+                        : entry.DisplayName;
+                    EditorGUILayout.LabelField(
+                        $"{index + 1}. {displayName} ({entry.PropertyName})",
+                        InspectorStyleLibrary.Title);
+                    EditorGUILayout.LabelField(
+                        $"Type: {entry.ValueType}    Matching shaders: {entry.ShaderNames.Count}",
+                        EditorStyles.miniLabel);
+                    entry.SemanticKey = EditorGUILayout.TextField("Key", entry.SemanticKey ?? string.Empty);
+
+                    if (entry.ShaderNames.Count > 0)
+                        EditorGUILayout.LabelField(string.Join(", ", entry.ShaderNames), EditorStyles.wordWrappedMiniLabel);
+                    else
+                        EditorGUILayout.HelpBox("No matching OK property was found.", MessageType.Warning);
+                }
+            }
+
+            private void DrawActions()
+            {
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    GUILayout.FlexibleSpace();
+                    if (GUILayout.Button("Cancel", GUILayout.Width(88f), GUILayout.Height(24f)))
+                    {
+                        Close();
+                        return;
+                    }
+
+                    if (GUILayout.Button("Add to Profile", GUILayout.Width(120f), GUILayout.Height(24f)))
+                    {
+                        Action<List<ProfilePropertyEntry>> onConfirm = m_OnConfirm;
+                        m_OnConfirm = null;
+                        onConfirm?.Invoke(m_Entries);
+                        Close();
+                    }
+                }
+            }
+
+            private static Rect BuildCenteredPosition(Vector2 size)
+            {
+                Rect mainWindow = EditorGUIUtility.GetMainWindowPosition();
+                return new Rect(
+                    mainWindow.center.x - size.x * 0.5f,
+                    mainWindow.center.y - size.y * 0.5f,
+                    size.x,
+                    size.y);
+            }
+        }
+
         private const float DefaultShaderPaneWidth = 280f;
         private const float DefaultPropertiesPaneWidth = 420f;
         private const float MinShaderPaneWidth = 240f;
@@ -653,12 +754,106 @@ namespace Rendering.MatDataTransfer.Editor
                 return;
 
             ApplySerializedObject();
+            List<ProfilePropertyEntry> entries = BuildSelectedProfileEntries();
+            if (entries.Count == 0)
+            {
+                ShowNotification(new GUIContent("No valid selected properties."));
+                return;
+            }
+
+            MaterialSemanticKeyProfile targetProfile = m_SemanticKeyProfile;
+            SemanticKeyInputWindow.Open(
+                entries,
+                confirmedEntries => ApplyEntriesToKeyProfile(targetProfile, confirmedEntries));
+        }
+
+        private List<ProfilePropertyEntry> BuildSelectedProfileEntries()
+        {
+            List<ProfilePropertyEntry> entries = new List<ProfilePropertyEntry>();
             List<int> selectedIndices = GetSortedPropertySelection();
             IReadOnlyList<CatalogProperty> properties = ActiveCatalog.Properties;
-            string shaderName = GetSelectedShaderName();
+            for (int i = 0; i < selectedIndices.Count; i++)
+            {
+                int selectedIndex = selectedIndices[i];
+                if (selectedIndex < 0 || selectedIndex >= properties.Count)
+                    continue;
 
-            Undo.RecordObject(m_SemanticKeyProfile, "Add Properties to Semantic Key Profile");
-            SerializedObject profileObject = new SerializedObject(m_SemanticKeyProfile);
+                CatalogProperty property = properties[selectedIndex];
+                ShaderPropertyInfo propertyInfo = property?.PropertyInfo;
+                if (propertyInfo == null || string.IsNullOrWhiteSpace(propertyInfo.PropertyName))
+                    continue;
+
+                ProfilePropertyEntry entry = new ProfilePropertyEntry
+                {
+                    PropertyName = propertyInfo.PropertyName.Trim(),
+                    DisplayName = propertyInfo.InspectorDisplayName,
+                    ValueType = propertyInfo.ValueType,
+                    SemanticKey = property.SuggestedSemanticKey
+                };
+                CollectMatchingShaderNames(entry);
+                entries.Add(entry);
+            }
+
+            return entries;
+        }
+
+        private void CollectMatchingShaderNames(ProfilePropertyEntry entry)
+        {
+            HashSet<string> shaderNames = new HashSet<string>(StringComparer.Ordinal);
+            for (int i = 0; i < m_Workspaces.Count; i++)
+            {
+                ShaderPropertyCatalog catalog = m_Workspaces[i]?.Catalog;
+                if (catalog == null || !CatalogHasMatchingOkProperty(catalog, entry))
+                    continue;
+
+                string shaderName = GetCatalogShaderName(catalog);
+                if (!string.IsNullOrWhiteSpace(shaderName))
+                    shaderNames.Add(shaderName.Trim());
+            }
+
+            entry.ShaderNames.AddRange(shaderNames);
+            entry.ShaderNames.Sort(StringComparer.Ordinal);
+        }
+
+        private static bool CatalogHasMatchingOkProperty(
+            ShaderPropertyCatalog catalog,
+            ProfilePropertyEntry entry)
+        {
+            IReadOnlyList<CatalogProperty> properties = catalog.Properties;
+            for (int i = 0; i < properties.Count; i++)
+            {
+                CatalogProperty property = properties[i];
+                ShaderPropertyInfo propertyInfo = property?.PropertyInfo;
+                if (property == null || property.Status != CatalogPropertyStatus.Ok || propertyInfo == null)
+                    continue;
+                if (propertyInfo.ValueType != entry.ValueType)
+                    continue;
+                if (string.Equals(propertyInfo.PropertyName, entry.PropertyName, StringComparison.Ordinal))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static string GetCatalogShaderName(ShaderPropertyCatalog catalog)
+        {
+            if (catalog == null)
+                return string.Empty;
+            if (!string.IsNullOrWhiteSpace(catalog.ShaderName))
+                return catalog.ShaderName;
+
+            return catalog.Shader != null ? catalog.Shader.name : string.Empty;
+        }
+
+        private void ApplyEntriesToKeyProfile(
+            MaterialSemanticKeyProfile targetProfile,
+            List<ProfilePropertyEntry> entries)
+        {
+            if (targetProfile == null || entries == null)
+                return;
+
+            Undo.RecordObject(targetProfile, "Add Properties to Semantic Key Profile");
+            SerializedObject profileObject = new SerializedObject(targetProfile);
             profileObject.Update();
             SerializedProperty rules = profileObject.FindProperty("rules");
             if (rules == null)
@@ -667,20 +862,20 @@ namespace Rendering.MatDataTransfer.Editor
             int addedPropertyCount = 0;
             int createdRuleCount = 0;
             int skippedPropertyCount = 0;
-            for (int i = 0; i < selectedIndices.Count; i++)
+            for (int i = 0; i < entries.Count; i++)
             {
-                int selectedIndex = selectedIndices[i];
-                if (selectedIndex < 0 || selectedIndex >= properties.Count)
+                ProfilePropertyEntry entry = entries[i];
+                if (entry == null ||
+                    string.IsNullOrWhiteSpace(entry.SemanticKey) ||
+                    entry.ShaderNames.Count == 0)
                 {
                     skippedPropertyCount++;
                     continue;
                 }
 
-                CatalogProperty property = properties[selectedIndex];
-                if (!TryAddPropertyToProfileRule(
+                if (!TryMergeEntryIntoProfileRule(
                         rules,
-                        property,
-                        shaderName,
+                        entry,
                         out bool createdRule))
                 {
                     skippedPropertyCount++;
@@ -694,7 +889,7 @@ namespace Rendering.MatDataTransfer.Editor
 
             if (profileObject.ApplyModifiedProperties())
             {
-                EditorUtility.SetDirty(m_SemanticKeyProfile);
+                EditorUtility.SetDirty(targetProfile);
                 AssetDatabase.SaveAssets();
             }
 
@@ -702,55 +897,51 @@ namespace Rendering.MatDataTransfer.Editor
                 $"Profile updated: {addedPropertyCount} added, {createdRuleCount} rules created, {skippedPropertyCount} skipped."));
         }
 
-        private static bool TryAddPropertyToProfileRule(
+        private static bool TryMergeEntryIntoProfileRule(
             SerializedProperty rules,
-            CatalogProperty property,
-            string shaderName,
+            ProfilePropertyEntry entry,
             out bool createdRule)
         {
             createdRule = false;
-            if (property?.PropertyInfo == null ||
-                string.IsNullOrWhiteSpace(property.PropertyInfo.PropertyName) ||
-                string.IsNullOrWhiteSpace(property.SuggestedSemanticKey))
+            if (entry == null ||
+                string.IsNullOrWhiteSpace(entry.PropertyName) ||
+                string.IsNullOrWhiteSpace(entry.SemanticKey) ||
+                entry.ShaderNames.Count == 0)
             {
                 return false;
             }
 
-            string semanticKey = property.SuggestedSemanticKey.Trim();
-            string propertyName = property.PropertyInfo.PropertyName.Trim();
+            string semanticKey = entry.SemanticKey.Trim();
+            string propertyName = entry.PropertyName.Trim();
             int ruleIndex = FindCompatibleProfileRule(
                 rules,
                 semanticKey,
-                property.PropertyInfo.ValueType,
-                shaderName);
+                entry.ValueType);
 
             if (ruleIndex < 0)
             {
                 ruleIndex = CreateProfileRule(
                     rules,
                     semanticKey,
-                    property.PropertyInfo.ValueType,
-                    shaderName);
+                    entry.ValueType);
                 createdRule = true;
             }
 
-            SerializedProperty propertyNames = rules
-                .GetArrayElementAtIndex(ruleIndex)
-                .FindPropertyRelative("PropertyNames");
-            if (ContainsString(propertyNames, propertyName))
-                return false;
+            SerializedProperty rule = rules.GetArrayElementAtIndex(ruleIndex);
+            bool changed = AddUniqueString(
+                rule.FindPropertyRelative("PropertyNames"),
+                propertyName);
+            SerializedProperty includedShaders = rule.FindPropertyRelative("IncludeShaders");
+            for (int i = 0; i < entry.ShaderNames.Count; i++)
+                changed |= AddUniqueString(includedShaders, entry.ShaderNames[i]);
 
-            int newIndex = propertyNames.arraySize;
-            propertyNames.InsertArrayElementAtIndex(newIndex);
-            propertyNames.GetArrayElementAtIndex(newIndex).stringValue = propertyName;
-            return true;
+            return changed || createdRule;
         }
 
         private static int FindCompatibleProfileRule(
             SerializedProperty rules,
             string semanticKey,
-            ParamValueType valueType,
-            string shaderName)
+            ParamValueType valueType)
         {
             for (int i = 0; i < rules.arraySize; i++)
             {
@@ -761,7 +952,9 @@ namespace Rendering.MatDataTransfer.Editor
                     continue;
                 if (GetEnumValue(rule, "ValueType") != (int)valueType)
                     continue;
-                if (!RuleIncludesShader(rule, shaderName))
+                if (GetEnumValue(rule, "ShaderMatchMode") != (int)MaterialSemanticShaderMatchMode.Exact)
+                    continue;
+                if (HasNonEmptyString(rule.FindPropertyRelative("ExcludeShaders")))
                     continue;
 
                 return i;
@@ -770,49 +963,10 @@ namespace Rendering.MatDataTransfer.Editor
             return -1;
         }
 
-        private static bool RuleIncludesShader(SerializedProperty rule, string shaderName)
-        {
-            int matchMode = GetEnumValue(rule, "ShaderMatchMode");
-            SerializedProperty excludedShaders = rule.FindPropertyRelative("ExcludeShaders");
-            if (ShaderListMatches(excludedShaders, shaderName, matchMode))
-                return false;
-
-            SerializedProperty includedShaders = rule.FindPropertyRelative("IncludeShaders");
-            if (!HasNonEmptyString(includedShaders))
-                return true;
-
-            return ShaderListMatches(includedShaders, shaderName, matchMode);
-        }
-
-        private static bool ShaderListMatches(
-            SerializedProperty shaderNames,
-            string shaderName,
-            int matchMode)
-        {
-            if (shaderNames == null || string.IsNullOrWhiteSpace(shaderName))
-                return false;
-
-            for (int i = 0; i < shaderNames.arraySize; i++)
-            {
-                string pattern = shaderNames.GetArrayElementAtIndex(i).stringValue;
-                if (string.IsNullOrWhiteSpace(pattern))
-                    continue;
-
-                bool matches = matchMode == (int)MaterialSemanticShaderMatchMode.Prefix
-                    ? shaderName.StartsWith(pattern, StringComparison.Ordinal)
-                    : string.Equals(shaderName, pattern, StringComparison.Ordinal);
-                if (matches)
-                    return true;
-            }
-
-            return false;
-        }
-
         private static int CreateProfileRule(
             SerializedProperty rules,
             string semanticKey,
-            ParamValueType valueType,
-            string shaderName)
+            ParamValueType valueType)
         {
             int index = rules.arraySize;
             rules.InsertArrayElementAtIndex(index);
@@ -822,11 +976,6 @@ namespace Rendering.MatDataTransfer.Editor
             rule.FindPropertyRelative("ValueType").enumValueIndex = (int)valueType;
             SerializedProperty includedShaders = rule.FindPropertyRelative("IncludeShaders");
             includedShaders.ClearArray();
-            if (!string.IsNullOrWhiteSpace(shaderName))
-            {
-                includedShaders.InsertArrayElementAtIndex(0);
-                includedShaders.GetArrayElementAtIndex(0).stringValue = shaderName.Trim();
-            }
             rule.FindPropertyRelative("ExcludeShaders").ClearArray();
             rule.FindPropertyRelative("ShaderMatchMode").enumValueIndex =
                 (int)MaterialSemanticShaderMatchMode.Exact;
@@ -834,6 +983,17 @@ namespace Rendering.MatDataTransfer.Editor
             rule.FindPropertyRelative("Enabled").boolValue = true;
             rule.FindPropertyRelative("Description").stringValue = string.Empty;
             return index;
+        }
+
+        private static bool AddUniqueString(SerializedProperty list, string value)
+        {
+            if (list == null || string.IsNullOrWhiteSpace(value) || ContainsString(list, value))
+                return false;
+
+            int newIndex = list.arraySize;
+            list.InsertArrayElementAtIndex(newIndex);
+            list.GetArrayElementAtIndex(newIndex).stringValue = value.Trim();
+            return true;
         }
 
         private static bool ContainsString(SerializedProperty list, string expected)
