@@ -1,0 +1,22 @@
+{
+    "name": "REP.MatDataTransfer.PerformanceTests",
+    "rootNamespace": "Rendering.MatDataTransfer.PerformanceTests",
+    "references": [
+        "REP.MatDataTransfer.Runtime",
+        "Unity.PerformanceTesting"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [
+        "UNITY_INCLUDE_TESTS"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false,
+    "optionalUnityReferences": [
+        "TestAssemblies"
+    ]
+}

@@ -43,19 +43,26 @@ namespace Rendering.MatDataTransfer.Runtime
                 if (!TryValidateReady())
                     return;
 
-                SyncLiveInstances();
+                using (MatDataTransferProfiling.PassSyncInstances.Auto())
+                    SyncLiveInstances();
                 m_RequestContext.BeginFrame();
-                SubmitRequests(m_RequestContext);
+                using (MatDataTransferProfiling.PipelineDrainProviders.Auto())
+                    SubmitRequests(m_RequestContext);
 
                 if (m_FramePayloads.Count == 0)
                     return;
 
-                IReadOnlyList<ParamWriteCommand> commands = m_Resolver.Resolve(
-                    Catalogs,
-                    MatDataTransferInstanceRegister,
-                    m_FramePayloads);
+                IReadOnlyList<ParamWriteCommand> commands;
+                using (MatDataTransferProfiling.PipelineResolve.Auto())
+                {
+                    commands = m_Resolver.Resolve(
+                        Catalogs,
+                        MatDataTransferInstanceRegister,
+                        m_FramePayloads);
+                }
 
-                ApplyWriteCommands(commands);
+                using (MatDataTransferProfiling.PipelineWrite.Auto())
+                    ApplyWriteCommands(commands);
             }
             finally
             {

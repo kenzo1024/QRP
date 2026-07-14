@@ -21,10 +21,21 @@ namespace Rendering.MatDataTransfer.Runtime
         [SerializeField] private int priority;
         [SerializeField] private ParamValue testValue = ParamValue.Color(Color.white);
 
+        [Header("Performance Sampling")]
+        [Tooltip("Enable only for manual inspection. Formatting status text allocates managed memory.")]
+        [SerializeField] private bool refreshStatusEveryFrame;
+
         [Header("Status")]
         [SerializeField] private bool lastSubmitSuccess;
         [SerializeField] private string resolvedTargetMessage;
         [SerializeField] private string statusMessage;
+
+        private MatDataTransferSubmitSource m_CachedSource;
+
+        private void OnEnable()
+        {
+            RefreshCachedSource();
+        }
 
         private void Update()
         {
@@ -48,14 +59,17 @@ namespace Rendering.MatDataTransfer.Runtime
                 targetInstance,
                 semanticKey,
                 testValue,
-                MatDataTransferSubmitSource.From(this, SourceLabel),
+                m_CachedSource,
                 ParamWriteLayer.Gameplay,
                 priority
             );
 
             lastSubmitSuccess = result.IsAccepted;
-            statusMessage = result.ToString();
-            UpdateResolvedTargetMessage();
+            if (refreshStatusEveryFrame)
+            {
+                statusMessage = result.ToString();
+                UpdateResolvedTargetMessage();
+            }
         }
 
         private void UpdateResolvedTargetMessage()
@@ -88,7 +102,13 @@ namespace Rendering.MatDataTransfer.Runtime
         {
             EnsureTargetInstance();
             EnsureTargetRenderer();
+            RefreshCachedSource();
             UpdateResolvedTargetMessage();
+        }
+
+        private void RefreshCachedSource()
+        {
+            m_CachedSource = MatDataTransferSubmitSource.From(this, SourceLabel);
         }
 
         private void EnsureTargetInstance()

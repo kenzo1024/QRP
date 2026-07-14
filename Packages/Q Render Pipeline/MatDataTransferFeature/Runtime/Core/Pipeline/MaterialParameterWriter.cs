@@ -85,7 +85,8 @@ namespace Rendering.MatDataTransfer.Runtime
             if (!TryGetPropertyBlock(target, out MaterialPropertyBlock block, out failureReason))
                 return false;
 
-            SetValue(block, target.PropertyId, command.Payload.Identity.Value);
+            using (MatDataTransferProfiling.PipelineWriteSetValue.Auto())
+                SetValue(block, target.PropertyId, command.Payload.Identity.Value);
             return true;
         }
 
@@ -97,7 +98,8 @@ namespace Rendering.MatDataTransfer.Runtime
             if (!TryGetMaterial(target, false, out Material material, out failureReason))
                 return false;
 
-            SetValue(material, target.PropertyId, command.Payload.Identity.Value);
+            using (MatDataTransferProfiling.PipelineWriteSetValue.Auto())
+                SetValue(material, target.PropertyId, command.Payload.Identity.Value);
             return true;
         }
 
@@ -216,11 +218,15 @@ namespace Rendering.MatDataTransfer.Runtime
 
         private static Material ResolveMaterial(Renderer renderer, int materialSlot, bool shared)
         {
-            Material[] materials = shared ? renderer.sharedMaterials : renderer.materials;
-            if (materials == null || materialSlot < 0 || materialSlot >= materials.Length)
-                return null;
+            using (MatDataTransferProfiling.PipelineWriteResolveMaterial.Auto())
+            {
+                MatDataTransferProfiling.AddMaterialArrayRead();
+                Material[] materials = shared ? renderer.sharedMaterials : renderer.materials;
+                if (materials == null || materialSlot < 0 || materialSlot >= materials.Length)
+                    return null;
 
-            return materials[materialSlot];
+                return materials[materialSlot];
+            }
         }
 
         private void FlushPropertyBlocks()

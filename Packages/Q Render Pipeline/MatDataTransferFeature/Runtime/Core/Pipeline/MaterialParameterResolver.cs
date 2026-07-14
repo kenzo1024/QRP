@@ -35,7 +35,13 @@ namespace Rendering.MatDataTransfer.Runtime
             MatDataTransferInstanceRegister registry,
             ParamTransferPayload payload)
         {
-            if (!TryResolveTarget(registry, payload, out RendererMaterialBinding rendererBinding, out string gameObjectPath))
+            RendererMaterialBinding rendererBinding;
+            string gameObjectPath;
+            bool targetResolved;
+            using (MatDataTransferProfiling.PipelineResolveTarget.Auto())
+                targetResolved = TryResolveTarget(registry, payload, out rendererBinding, out gameObjectPath);
+
+            if (!targetResolved)
                 return;
 
             ParamTransferPayload resolvedPayload = payload;
@@ -77,6 +83,7 @@ namespace Rendering.MatDataTransfer.Runtime
             {
                 group = new List<ResolvedParamRequest>();
                 m_Groups.Add(key, group);
+                MatDataTransferProfiling.AddGroup();
             }
 
             group.Add(new ResolvedParamRequest(
@@ -94,13 +101,16 @@ namespace Rendering.MatDataTransfer.Runtime
 
             group.Sort(CompareRequestStrength);
             ResolvedParamRequest strongest = group[group.Count - 1];
-            RecordOverriddenRequests(group, strongest);
+            using (MatDataTransferProfiling.PipelineResolveConflict.Auto())
+                RecordOverriddenRequests(group, strongest);
+
             m_Commands.Add(new ParamWriteCommand(
                 strongest.Payload,
                 strongest.Property,
                 strongest.BindingResolution,
                 strongest.Renderer,
                 strongest.GameObjectPath));
+            MatDataTransferProfiling.AddCommand();
         }
 
         private static void RecordOverriddenRequests(

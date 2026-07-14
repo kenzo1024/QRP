@@ -22,7 +22,8 @@ namespace Rendering.MatDataTransfer.Runtime
             if (renderer == null || !IsPrimaryInstance())
                 return;
 
-            SyncLiveInstances();
+            using (MatDataTransferProfiling.PassSyncInstances.Auto())
+                SyncLiveInstances();
             if (GetActiveInstanceCount() == 0 || m_Pass == null)
                 return;
 
@@ -67,7 +68,8 @@ namespace Rendering.MatDataTransfer.Runtime
                     builder.AllowGlobalStateModification(true);
                     builder.SetRenderFunc(static (PassData data, UnsafeGraphContext ctx) =>
                     {
-                        data.feature.ExecuteRequestPipeline();
+                        using (MatDataTransferProfiling.PassPipeline.Auto())
+                            data.feature.ExecuteRequestPipeline();
                     });
                 }
             }

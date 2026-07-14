@@ -51,43 +51,63 @@ namespace Rendering.MatDataTransfer.Runtime
             ParamWriteLayer layer,
             int priority = 0)
         {
+            using (MatDataTransferProfiling.SubmitTotal.Auto())
+                return SubmitScope(target, semanticKey, value, scope, source, layer, priority);
+        }
+
+        private static ParamSubmitTrace SubmitScope(
+            MatDataTransferInstance target,
+            string semanticKey,
+            ParamValue value,
+            ParamSubmitScope scope,
+            MatDataTransferSubmitSource source,
+            ParamWriteLayer layer,
+            int priority)
+        {
             ParamSubmitTrace rootTrace = new ParamSubmitTrace();
             rootTrace.AddStep(ParamSubmitStep.Submitted(
                 "Scope.Begin",
                 "Scope submit created."));
 
-            if (!TryValidateScopeRoot(target, semanticKey, scope, source, rootTrace))
+            bool isValid;
+            using (MatDataTransferProfiling.SubmitValidate.Auto())
+                isValid = TryValidateScopeRoot(target, semanticKey, scope, source, rootTrace);
+
+            if (!isValid)
                 return rootTrace;
 
             rootTrace.MarkBatchRoot();
             MatDataTransferFeature feature = MatDataTransferFeature.Instance;
             IReadOnlyList<RendererMaterialBinding> bindings = target.Bindings;
-            for (int i = 0; i < bindings.Count; i++)
+            using (MatDataTransferProfiling.SubmitExpandScope.Auto())
             {
-                RendererMaterialBinding binding = bindings[i];
-                if (!IsBindingInsideScope(binding, scope))
-                    continue;
-
-                if (!BindingSupportsKey(binding, semanticKey, feature))
+                for (int i = 0; i < bindings.Count; i++)
                 {
-                    rootTrace.AddSkipped();
-                    continue;
+                    RendererMaterialBinding binding = bindings[i];
+                    if (!IsBindingInsideScope(binding, scope))
+                        continue;
+
+                    if (!BindingSupportsKey(binding, semanticKey, feature))
+                    {
+                        rootTrace.AddSkipped();
+                        continue;
+                    }
+
+                    ParamSubmitTrace childTrace = Submit(
+                        target,
+                        semanticKey,
+                        value,
+                        binding,
+                        source,
+                        layer,
+                        priority);
+                    rootTrace.AddChild(childTrace);
                 }
 
-                ParamSubmitTrace childTrace = Submit(
-                    target,
-                    semanticKey,
-                    value,
-                    binding,
-                    source,
-                    layer,
-                    priority);
-                rootTrace.AddChild(childTrace);
+                rootTrace.AddStep(ParamSubmitStep.Queued(
+                    "Scope.Expand",
+                    $"Scope expanded: {rootTrace.Children.Count} submitted, {rootTrace.SkippedCount} skipped."));
             }
-
-            rootTrace.AddStep(ParamSubmitStep.Queued(
-                "Scope.Expand",
-                $"Scope expanded: {rootTrace.Children.Count} submitted, {rootTrace.SkippedCount} skipped."));
             return rootTrace;
         }
 
@@ -130,6 +150,12 @@ namespace Rendering.MatDataTransfer.Runtime
 
         private static ParamSubmitTrace SubmitPayload(ref ParamTransferPayload payload)
         {
+            using (MatDataTransferProfiling.SubmitTotal.Auto())
+                return SubmitPayloadProfiled(ref payload);
+        }
+
+        private static ParamSubmitTrace SubmitPayloadProfiled(ref ParamTransferPayload payload)
+        {
             payload.Sequence = MatDataTransferSubmitSequence.Next(out int submitFrameIndex);
             payload.SubmitFrameIndex = submitFrameIndex;
             MatDataTransferLogging.AppendSubmitStep(
@@ -140,7 +166,11 @@ namespace Rendering.MatDataTransfer.Runtime
 
             MatDataTransferFeature feature = MatDataTransferFeature.Instance;
 
-            if (!TryValidate(ref payload, feature))
+            bool isValid;
+            using (MatDataTransferProfiling.SubmitValidate.Auto())
+                isValid = TryValidate(ref payload, feature);
+
+            if (!isValid)
             {
                 MatDataTransferLogging.CaptureSubmitSnapshot(ref payload);
                 return payload.Trace;

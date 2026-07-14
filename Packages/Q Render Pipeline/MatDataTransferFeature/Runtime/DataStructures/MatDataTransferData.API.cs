@@ -18,6 +18,7 @@ namespace Rendering.MatDataTransfer.Runtime
             ParamRequestIdentity identity,
             ParamWriteConfig writeConfig)
         {
+            MatDataTransferProfiling.AddPayload();
             Identity = identity;
             WriteConfig = writeConfig;
             ProviderName = string.Empty;
@@ -151,6 +152,7 @@ namespace Rendering.MatDataTransfer.Runtime
 
         public ParamSubmitStep()
         {
+            MatDataTransferProfiling.AddStep();
             Stage = string.Empty;
             Status = ParamWriteStatus.Submitted;
             Code = ParamWriteResultCode.None;
@@ -165,6 +167,7 @@ namespace Rendering.MatDataTransfer.Runtime
             string message,
             string overriddenBySourceId = null)
         {
+            MatDataTransferProfiling.AddStep();
             Stage = stage;
             Status = status;
             Code = code;
@@ -236,6 +239,11 @@ namespace Rendering.MatDataTransfer.Runtime
         public int AcceptedCount => CountChildren(true, false);
         public int AppliedCount => CountChildren(false, true);
         public int RejectedCount => IsBatch ? CountRejectedChildren() : (Current != null && !IsAccepted ? 1 : 0);
+
+        public ParamSubmitTrace()
+        {
+            MatDataTransferProfiling.AddTrace();
+        }
 
         public void AddStep(ParamSubmitStep step)
         {

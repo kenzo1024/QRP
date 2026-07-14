@@ -82,12 +82,15 @@ namespace Rendering.MatDataTransfer.Runtime
 
         internal static void CaptureSubmitSnapshot(ref ParamTransferPayload payload)
         {
-            Instance.CaptureSubmitSnapshotInternal(
-                ref payload,
-                default,
-                ParamWriteMethod.None,
-                string.Empty,
-                string.Empty);
+            using (MatDataTransferProfiling.LoggingCapture.Auto())
+            {
+                Instance.CaptureSubmitSnapshotInternal(
+                    ref payload,
+                    default,
+                    ParamWriteMethod.None,
+                    string.Empty,
+                    string.Empty);
+            }
         }
 
         internal static void CaptureWriteSnapshot(
@@ -95,12 +98,15 @@ namespace Rendering.MatDataTransfer.Runtime
             ParamWriteCommand command,
             ParamWriteMethod writeMethod)
         {
-            Instance.CaptureSubmitSnapshotInternal(
-                ref payload,
-                command.BindingResolution,
-                writeMethod,
-                command.GameObjectPath,
-                BuildRendererPath(command.Renderer));
+            using (MatDataTransferProfiling.LoggingCapture.Auto())
+            {
+                Instance.CaptureSubmitSnapshotInternal(
+                    ref payload,
+                    command.BindingResolution,
+                    writeMethod,
+                    command.GameObjectPath,
+                    BuildRendererPath(command.Renderer));
+            }
         }
 
         internal static void CaptureResolvedSnapshot(
@@ -110,12 +116,15 @@ namespace Rendering.MatDataTransfer.Runtime
             string gameObjectPath,
             Renderer renderer)
         {
-            Instance.CaptureResolvedSnapshotInternal(
-                ref payload,
-                binding,
-                step,
-                gameObjectPath,
-                BuildRendererPath(renderer));
+            using (MatDataTransferProfiling.LoggingCapture.Auto())
+            {
+                Instance.CaptureResolvedSnapshotInternal(
+                    ref payload,
+                    binding,
+                    step,
+                    gameObjectPath,
+                    BuildRendererPath(renderer));
+            }
         }
 
         private void AppendSubmitStepInternal(
@@ -182,6 +191,12 @@ namespace Rendering.MatDataTransfer.Runtime
         }
 
         public void CompleteFrame()
+        {
+            using (MatDataTransferProfiling.LoggingCommitTimeline.Auto())
+                CompleteFrameProfiled();
+        }
+
+        private void CompleteFrameProfiled()
         {
             m_IsFrameOpen = false;
             if (!m_EnableLogging)
@@ -380,6 +395,7 @@ namespace Rendering.MatDataTransfer.Runtime
                 SubmitLogSummary = BuildLogSummary(submitTrace),
                 ValueHash = MatDataTransferTimelineRecord.HashValuePreview(preview)
             });
+            MatDataTransferProfiling.AddTimelineRecord();
         }
 
         private static int ResolveTimelineFrameIndex(ParamTransferPayload payload)
