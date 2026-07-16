@@ -30,6 +30,10 @@ namespace Rendering.MatDataTransfer.Runtime
             if (!IsPrimaryInstance())
                 return;
 
+#if UNITY_INCLUDE_TESTS
+            RecordTestPipelineExecution();
+#endif
+
             Logging.BeginFrame();
             try
             {

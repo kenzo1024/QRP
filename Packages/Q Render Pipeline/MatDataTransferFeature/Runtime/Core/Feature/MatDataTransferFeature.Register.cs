@@ -1,13 +1,51 @@
 using System.Collections.Generic;
 using UnityEngine;
+#if UNITY_INCLUDE_TESTS
+using System;
+using System.Diagnostics;
+#endif
 
 namespace Rendering.MatDataTransfer.Runtime
 {
+#if UNITY_INCLUDE_TESTS
+    internal readonly struct MatDataTransferInstanceSyncStats
+    {
+        internal readonly int CallCount;
+        internal readonly long ElapsedNanoseconds;
+        internal readonly long GcAllocatedBytes;
+        internal readonly int LiveInstanceCount;
+        internal readonly int RegisteredInstanceCount;
+        internal readonly int PipelineExecutionCount;
+
+        internal MatDataTransferInstanceSyncStats(
+            int callCount,
+            long elapsedNanoseconds,
+            long gcAllocatedBytes,
+            int liveInstanceCount,
+            int registeredInstanceCount,
+            int pipelineExecutionCount)
+        {
+            CallCount = callCount;
+            ElapsedNanoseconds = elapsedNanoseconds;
+            GcAllocatedBytes = gcAllocatedBytes;
+            LiveInstanceCount = liveInstanceCount;
+            RegisteredInstanceCount = registeredInstanceCount;
+            PipelineExecutionCount = pipelineExecutionCount;
+        }
+    }
+#endif
+
     public partial class MatDataTransferFeature
     {
         private readonly List<MatDataTransferInstance> m_LiveInstances =
             new List<MatDataTransferInstance>();
         private MatDataTransferInstanceRegister m_InstanceRegister;
+#if UNITY_INCLUDE_TESTS
+        private int m_TestSyncCallCount;
+        private long m_TestSyncElapsedNanoseconds;
+        private long m_TestSyncGcAllocatedBytes;
+        private int m_TestPipelineExecutionCount;
+#endif
 
         private MatDataTransferInstanceRegister MatDataTransferInstanceRegister => m_InstanceRegister;
 
@@ -76,6 +114,30 @@ namespace Rendering.MatDataTransfer.Runtime
 
         private void SyncLiveInstances()
         {
+#if UNITY_INCLUDE_TESTS
+            long startTimestamp = Stopwatch.GetTimestamp();
+            long startAllocatedBytes = GC.GetAllocatedBytesForCurrentThread();
+            m_TestSyncCallCount++;
+            try
+            {
+                SyncLiveInstancesCore();
+            }
+            finally
+            {
+                long elapsedTicks = Stopwatch.GetTimestamp() - startTimestamp;
+                m_TestSyncElapsedNanoseconds +=
+                    elapsedTicks * 1000000000L / Stopwatch.Frequency;
+                m_TestSyncGcAllocatedBytes += Math.Max(
+                    0L,
+                    GC.GetAllocatedBytesForCurrentThread() - startAllocatedBytes);
+            }
+#else
+            SyncLiveInstancesCore();
+#endif
+        }
+
+        private void SyncLiveInstancesCore()
+        {
             if (!IsPrimaryInstance() || m_InstanceRegister == null)
                 return;
 
@@ -83,6 +145,32 @@ namespace Rendering.MatDataTransfer.Runtime
             ReleaseInactiveRegisteredInstances();
             RegisterLiveInstances();
         }
+
+#if UNITY_INCLUDE_TESTS
+        internal void ResetInstanceSyncStats()
+        {
+            m_TestSyncCallCount = 0;
+            m_TestSyncElapsedNanoseconds = 0L;
+            m_TestSyncGcAllocatedBytes = 0L;
+            m_TestPipelineExecutionCount = 0;
+        }
+
+        internal MatDataTransferInstanceSyncStats GetInstanceSyncStats()
+        {
+            return new MatDataTransferInstanceSyncStats(
+                m_TestSyncCallCount,
+                m_TestSyncElapsedNanoseconds,
+                m_TestSyncGcAllocatedBytes,
+                m_LiveInstances.Count,
+                m_InstanceRegister != null ? m_InstanceRegister.ActiveCount : 0,
+                m_TestPipelineExecutionCount);
+        }
+
+        private void RecordTestPipelineExecution()
+        {
+            m_TestPipelineExecutionCount++;
+        }
+#endif
 
         private void ClearInstanceRegister()
         {

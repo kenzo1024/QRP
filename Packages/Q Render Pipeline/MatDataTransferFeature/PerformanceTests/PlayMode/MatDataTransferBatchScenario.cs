@@ -9,6 +9,20 @@ namespace Rendering.MatDataTransfer.PerformanceTests
         ForInstance
     }
 
+    internal enum MatDataTransferBatchPhase
+    {
+        UrpBaseline,
+        RendererBaseline,
+        InstanceIdle,
+        Submission
+    }
+
+    internal enum MatDataTransferBatchPipelineMode
+    {
+        RenderGraph,
+        Manual
+    }
+
     internal readonly struct MatDataTransferBatchScenario
     {
         public readonly string Id;
@@ -51,9 +65,9 @@ namespace Rendering.MatDataTransfer.PerformanceTests
 
         public string TestName => Id + "_" + Name;
 
-        public static MatDataTransferBatchScenario B00_EmptyDriver()
+        public static MatDataTransferBatchScenario B00_PhasedBaseline()
         {
-            return Baseline("B00", "EmptyDriver", 300, 12, 0, MatDataTransferBatchApiMode.None, false);
+            return Baseline("B00", "PhasedBaseline", 300, 12, 0, MatDataTransferBatchApiMode.None, false);
         }
 
         public static MatDataTransferBatchScenario B01_SmallSingleSource()

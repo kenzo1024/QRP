@@ -2,6 +2,8 @@ namespace Rendering.MatDataTransfer.PerformanceTests
 {
     internal struct MatDataTransferBatchFrameStats
     {
+        public MatDataTransferBatchPhase Phase;
+        public MatDataTransferBatchPipelineMode PipelineMode;
         public int FrameIndex;
         public double FrameMilliseconds;
         public long GcAllocatedBytes;
@@ -30,5 +32,10 @@ namespace Rendering.MatDataTransfer.PerformanceTests
         public long PipelineWriteSetValueNanoseconds;
         public long LoggingCaptureNanoseconds;
         public long LoggingCommitTimelineNanoseconds;
+        public int SyncCallCount;
+        public long SyncElapsedNanoseconds;
+        public long SyncGcAllocatedBytes;
+        public int LiveInstanceCount;
+        public int PipelineExecutionCount;
     }
 }

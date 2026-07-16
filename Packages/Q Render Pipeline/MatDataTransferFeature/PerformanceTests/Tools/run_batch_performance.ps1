@@ -19,7 +19,7 @@ function Get-ScenarioNames {
         }
         "Baseline" {
             return @(
-                "B00_EmptyDriver",
+                "B00_PhasedBaseline",
                 "B01_SmallSingleSource",
                 "B02_SmallConflict",
                 "B03_ObjectScale",
@@ -38,7 +38,7 @@ function Get-ScenarioNames {
         "All" {
             return @(
                 "Smoke_10Objects",
-                "B00_EmptyDriver",
+                "B00_PhasedBaseline",
                 "B01_SmallSingleSource",
                 "B02_SmallConflict",
                 "B03_ObjectScale",
@@ -53,6 +53,12 @@ function Get-ScenarioNames {
     }
 }
 
+function Quote-CommandLinePath {
+    param([string]$Path)
+
+    return '"' + $Path.Replace('"', '\"') + '"'
+}
+
 if (-not (Test-Path -LiteralPath $UnityPath)) {
     throw "Unity executable not found: $UnityPath"
 }
@@ -64,14 +70,16 @@ if (-not (Test-Path -LiteralPath $ProjectPath)) {
 New-Item -ItemType Directory -Force -Path $OutputRoot | Out-Null
 
 $runStamp = Get-Date -Format "yyyyMMdd_HHmmss"
+$runnerRoot = Join-Path ([IO.Path]::GetTempPath()) "MatDataTransfer_BatchMode_$runStamp"
+New-Item -ItemType Directory -Force -Path $runnerRoot | Out-Null
 $scenarios = Get-ScenarioNames -SetName $ScenarioSet
 $testClass = "Rendering.MatDataTransfer.PerformanceTests.MatDataTransferBatchModePerformanceTests"
 
 for ($repeatIndex = 1; $repeatIndex -le $Repeat; $repeatIndex++) {
     foreach ($scenario in $scenarios) {
         $scenarioStamp = "$runStamp`_r$repeatIndex"
-        $resultPath = Join-Path $OutputRoot "MatDataTransfer_BatchMode_$scenario`_$scenarioStamp.xml"
-        $logPath = Join-Path $OutputRoot "MatDataTransfer_BatchMode_$scenario`_$scenarioStamp.log"
+        $resultPath = Join-Path $runnerRoot "MatDataTransfer_BatchMode_$scenario`_$scenarioStamp.xml"
+        $logPath = Join-Path $runnerRoot "MatDataTransfer_BatchMode_$scenario`_$scenarioStamp.log"
         $filter = "$testClass.$scenario"
 
         Write-Host "Running $scenario repeat $repeatIndex/$Repeat"
@@ -84,14 +92,13 @@ for ($repeatIndex = 1; $repeatIndex -le $Repeat; $repeatIndex++) {
 
             $arguments = @(
                 "-batchmode",
-                "-nographics",
-                "-projectPath", $ProjectPath,
+                "-projectPath", (Quote-CommandLinePath $ProjectPath),
                 "-runTests",
                 "-testPlatform", "PlayMode",
                 "-testFilter", $filter,
-                "-testResults", $resultPath,
-                "-logFile", $logPath,
-                "-mdtOutputRoot", $OutputRoot,
+                "-testResults", (Quote-CommandLinePath $resultPath),
+                "-logFile", (Quote-CommandLinePath $logPath),
+                "-mdtOutputRoot", (Quote-CommandLinePath $OutputRoot),
                 "-mdtRunStamp", $scenarioStamp
             )
 
@@ -109,6 +116,10 @@ for ($repeatIndex = 1; $repeatIndex -le $Repeat; $repeatIndex++) {
         }
     }
 }
+
+Remove-Item -LiteralPath $runnerRoot -Recurse -Force
+Get-ChildItem -LiteralPath $OutputRoot -File -Filter '*.meta' -ErrorAction SilentlyContinue |
+    Remove-Item -Force
 
 Write-Host "MatDataTransfer batch performance run completed."
 Write-Host "Output: $OutputRoot"

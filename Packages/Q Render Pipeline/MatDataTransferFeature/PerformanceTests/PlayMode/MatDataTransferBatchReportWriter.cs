@@ -28,20 +28,12 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             MatDataTransferBatchFrameStats[] samples,
             int sampleCount)
         {
-            string rawPath = Path.Combine(
-                m_OutputRoot,
-                "MatDataTransfer_BatchMode_" + scenario.Id + "_" + m_RunStamp + "_Raw.csv");
             string summaryPath = Path.Combine(
                 m_OutputRoot,
                 "MatDataTransfer_BatchMode_" + m_RunStamp + "_Summary.csv");
-            string reportPath = Path.Combine(
-                m_OutputRoot,
-                "MatDataTransfer_BatchMode_" + m_RunStamp + "_Report.md");
 
-            WriteRaw(rawPath, scenario, samples, sampleCount);
             AppendSummary(summaryPath, scenario, samples, sampleCount);
-            AppendMarkdown(reportPath, scenario, samples, sampleCount, rawPath);
-            return rawPath;
+            return summaryPath;
         }
 
         public static string ResolveOutputRootFromCommandLine()
@@ -80,17 +72,20 @@ namespace Rendering.MatDataTransfer.PerformanceTests
         {
             StringBuilder builder = new StringBuilder(4096 + sampleCount * 512);
             builder.AppendLine(
-                "ScenarioId,FrameIndex,FrameMs,GcAllocatedBytes,ManagedHeapBytes,ActiveInstance,Payload,Group,Command,Applied,Overridden,Rejected,WriterFailed,Trace,TimelineRecord,MaterialArrayRead,SubmitTotalNs,SubmitValidateNs,PassSyncInstancesNs,PassPipelineNs,PipelineDrainProvidersNs,PipelineResolveNs,PipelineResolveTargetNs,PipelineResolveConflictNs,PipelineWriteNs,PipelineWriteResolveMaterialNs,PipelineWriteSetValueNs,LoggingCaptureNs,LoggingCommitTimelineNs");
+                "ScenarioId,Phase,PipelineMode,FrameIndex,FrameMs,GcAllocatedBytes,ManagedHeapBytes,ActiveInstance,LiveInstance,Payload,Group,Command,Applied,Overridden,Rejected,WriterFailed,Trace,TimelineRecord,MaterialArrayRead,SyncCallCount,SyncElapsedNs,SyncGcAllocatedBytes,PipelineExecutionCount,SubmitTotalNs,SubmitValidateNs,PassSyncInstancesNs,PassPipelineNs,PipelineDrainProvidersNs,PipelineResolveNs,PipelineResolveTargetNs,PipelineResolveConflictNs,PipelineWriteNs,PipelineWriteResolveMaterialNs,PipelineWriteSetValueNs,LoggingCaptureNs,LoggingCommitTimelineNs");
 
             for (int i = 0; i < sampleCount; i++)
             {
                 MatDataTransferBatchFrameStats sample = samples[i];
                 builder.Append(scenario.Id).Append(',');
+                builder.Append(sample.Phase).Append(',');
+                builder.Append(sample.PipelineMode).Append(',');
                 builder.Append(sample.FrameIndex).Append(',');
                 AppendDouble(builder, sample.FrameMilliseconds).Append(',');
                 builder.Append(sample.GcAllocatedBytes).Append(',');
                 builder.Append(sample.ManagedHeapBytes).Append(',');
                 builder.Append(sample.ActiveInstanceCount).Append(',');
+                builder.Append(sample.LiveInstanceCount).Append(',');
                 builder.Append(sample.PayloadCount).Append(',');
                 builder.Append(sample.GroupCount).Append(',');
                 builder.Append(sample.CommandCount).Append(',');
@@ -101,6 +96,10 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                 builder.Append(sample.TraceCount).Append(',');
                 builder.Append(sample.TimelineRecordCount).Append(',');
                 builder.Append(sample.MaterialArrayReadCount).Append(',');
+                builder.Append(sample.SyncCallCount).Append(',');
+                builder.Append(sample.SyncElapsedNanoseconds).Append(',');
+                builder.Append(sample.SyncGcAllocatedBytes).Append(',');
+                builder.Append(sample.PipelineExecutionCount).Append(',');
                 builder.Append(sample.SubmitTotalNanoseconds).Append(',');
                 builder.Append(sample.SubmitValidateNanoseconds).Append(',');
                 builder.Append(sample.PassSyncInstancesNanoseconds).Append(',');
@@ -125,13 +124,35 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             MatDataTransferBatchFrameStats[] samples,
             int sampleCount)
         {
+            Array phases = Enum.GetValues(typeof(MatDataTransferBatchPhase));
+            for (int i = 0; i < phases.Length; i++)
+            {
+                MatDataTransferBatchPhase phase = (MatDataTransferBatchPhase)phases.GetValue(i);
+                MatDataTransferBatchFrameStats[] phaseSamples = SelectPhase(
+                    samples,
+                    sampleCount,
+                    phase);
+                if (phaseSamples.Length == 0)
+                    continue;
+
+                AppendPhaseSummary(path, scenario, phaseSamples, phaseSamples.Length, phase);
+            }
+        }
+
+        private static void AppendPhaseSummary(
+            string path,
+            MatDataTransferBatchScenario scenario,
+            MatDataTransferBatchFrameStats[] samples,
+            int sampleCount,
+            MatDataTransferBatchPhase phase)
+        {
             bool writeHeader = !File.Exists(path);
             using (StreamWriter writer = new StreamWriter(path, true, new UTF8Encoding(false)))
             {
                 if (writeHeader)
                 {
                     writer.WriteLine(
-                        "UnityVersion,OperatingSystem,Processor,ScenarioId,ScenarioName,ObjectCount,PropertyCount,SourceCount,ApiMode,Logging,WarmupFrames,MeasurementFrames,ExpectedPayload,ExpectedCommand,FrameMsMedian,FrameMsP95,FrameMsMax,GcBytesMedian,GcBytesP95,GcBytesMax,SubmitMsMedian,ResolveMsMedian,WriteMsMedian,AppliedMedian,OverriddenMedian,RejectedMax,WriterFailedMax");
+                        "UnityVersion,OperatingSystem,Processor,ScenarioId,ScenarioName,Phase,PipelineMode,ObjectCount,PropertyCount,SourceCount,ApiMode,Logging,WarmupFrames,MeasurementFrames,ExpectedPayload,ExpectedCommand,FrameMsMedian,FrameMsP95,FrameMsMax,GcBytesMedian,GcBytesP95,GcBytesMax,SyncCallsMedian,SyncMsMedian,SyncMsP95,SyncMsMax,SyncGcBytesMedian,SyncGcBytesP95,SyncGcBytesMax,PipelineExecutionsMedian,SubmitMsMedian,ResolveMsMedian,WriteMsMedian,AppliedMedian,OverriddenMedian,RejectedMax,WriterFailedMax");
                 }
 
                 Summary frame = Summarize(samples, sampleCount, ValueKind.FrameMs);
@@ -143,6 +164,11 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                 Summary overridden = Summarize(samples, sampleCount, ValueKind.Overridden);
                 Summary rejected = Summarize(samples, sampleCount, ValueKind.Rejected);
                 Summary writerFailed = Summarize(samples, sampleCount, ValueKind.WriterFailed);
+                Summary syncCalls = Summarize(samples, sampleCount, ValueKind.SyncCalls);
+                Summary sync = Summarize(samples, sampleCount, ValueKind.SyncNs);
+                Summary syncGc = Summarize(samples, sampleCount, ValueKind.SyncGcBytes);
+                Summary pipelineExecutions = Summarize(samples, sampleCount, ValueKind.PipelineExecutions);
+                bool isSubmission = phase == MatDataTransferBatchPhase.Submission;
 
                 writer.Write(Escape(Application.unityVersion));
                 writer.Write(',');
@@ -153,6 +179,10 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                 writer.Write(scenario.Id);
                 writer.Write(',');
                 writer.Write(scenario.Name);
+                writer.Write(',');
+                writer.Write(phase);
+                writer.Write(',');
+                writer.Write(samples[0].PipelineMode);
                 writer.Write(',');
                 writer.Write(scenario.ObjectCount);
                 writer.Write(',');
@@ -168,9 +198,9 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                 writer.Write(',');
                 writer.Write(scenario.MeasurementFrames);
                 writer.Write(',');
-                writer.Write(scenario.ExpectedPayloadCount);
+                writer.Write(isSubmission ? scenario.ExpectedPayloadCount : 0);
                 writer.Write(',');
-                writer.Write(scenario.ExpectedCommandCount);
+                writer.Write(isSubmission ? scenario.ExpectedCommandCount : 0);
                 writer.Write(',');
                 WriteDouble(writer, frame.Median);
                 writer.Write(',');
@@ -183,6 +213,22 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                 WriteDouble(writer, gc.P95);
                 writer.Write(',');
                 WriteDouble(writer, gc.Max);
+                writer.Write(',');
+                WriteDouble(writer, syncCalls.Median);
+                writer.Write(',');
+                WriteDouble(writer, sync.Median / 1000000.0);
+                writer.Write(',');
+                WriteDouble(writer, sync.P95 / 1000000.0);
+                writer.Write(',');
+                WriteDouble(writer, sync.Max / 1000000.0);
+                writer.Write(',');
+                WriteDouble(writer, syncGc.Median);
+                writer.Write(',');
+                WriteDouble(writer, syncGc.P95);
+                writer.Write(',');
+                WriteDouble(writer, syncGc.Max);
+                writer.Write(',');
+                WriteDouble(writer, pipelineExecutions.Median);
                 writer.Write(',');
                 WriteDouble(writer, submit.Median / 1000000.0);
                 writer.Write(',');
@@ -208,29 +254,84 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             int sampleCount,
             string rawPath)
         {
+            using (StreamWriter writer = new StreamWriter(path, true, new UTF8Encoding(false)))
+            {
+                Array phases = Enum.GetValues(typeof(MatDataTransferBatchPhase));
+                for (int i = 0; i < phases.Length; i++)
+                {
+                    MatDataTransferBatchPhase phase = (MatDataTransferBatchPhase)phases.GetValue(i);
+                    MatDataTransferBatchFrameStats[] phaseSamples = SelectPhase(
+                        samples,
+                        sampleCount,
+                        phase);
+                    if (phaseSamples.Length > 0)
+                        AppendPhaseMarkdown(writer, scenario, phaseSamples, phase, rawPath);
+                }
+            }
+        }
+
+        private static void AppendPhaseMarkdown(
+            TextWriter writer,
+            MatDataTransferBatchScenario scenario,
+            MatDataTransferBatchFrameStats[] samples,
+            MatDataTransferBatchPhase phase,
+            string rawPath)
+        {
+            int sampleCount = samples.Length;
             Summary frame = Summarize(samples, sampleCount, ValueKind.FrameMs);
             Summary gc = Summarize(samples, sampleCount, ValueKind.GcBytes);
             Summary submit = Summarize(samples, sampleCount, ValueKind.SubmitNs);
             Summary resolve = Summarize(samples, sampleCount, ValueKind.ResolveNs);
             Summary write = Summarize(samples, sampleCount, ValueKind.WriteNs);
+            Summary syncCalls = Summarize(samples, sampleCount, ValueKind.SyncCalls);
+            Summary sync = Summarize(samples, sampleCount, ValueKind.SyncNs);
+            Summary syncGc = Summarize(samples, sampleCount, ValueKind.SyncGcBytes);
+            Summary pipelineExecutions = Summarize(samples, sampleCount, ValueKind.PipelineExecutions);
 
-            using (StreamWriter writer = new StreamWriter(path, true, new UTF8Encoding(false)))
+            writer.WriteLine("## " + scenario.TestName + " / " + phase);
+            writer.WriteLine();
+            writer.WriteLine("- Pipeline mode: `" + samples[0].PipelineMode + "`");
+            writer.WriteLine();
+            writer.WriteLine("| Metric | Median | P95 | Max |");
+            writer.WriteLine("|---|---:|---:|---:|");
+            WriteMarkdownRow(writer, "Frame ms", frame);
+            WriteMarkdownRow(writer, "GC bytes", gc);
+            WriteMarkdownRow(writer, "Sync calls", syncCalls);
+            WriteMarkdownRow(writer, "Sync ms", sync.Scale(1.0 / 1000000.0));
+            WriteMarkdownRow(writer, "Sync GC bytes", syncGc);
+            WriteMarkdownRow(writer, "Pipeline executions", pipelineExecutions);
+            WriteMarkdownRow(writer, "Submit ms", submit.Scale(1.0 / 1000000.0));
+            WriteMarkdownRow(writer, "Resolve ms", resolve.Scale(1.0 / 1000000.0));
+            WriteMarkdownRow(writer, "Write ms", write.Scale(1.0 / 1000000.0));
+            writer.WriteLine();
+            writer.WriteLine("- Raw CSV: `" + rawPath + "`");
+            writer.WriteLine("- Expected Payload: `" + (phase == MatDataTransferBatchPhase.Submission ? scenario.ExpectedPayloadCount : 0) + "`");
+            writer.WriteLine("- Expected Command: `" + (phase == MatDataTransferBatchPhase.Submission ? scenario.ExpectedCommandCount : 0) + "`");
+            writer.WriteLine();
+        }
+
+        private static MatDataTransferBatchFrameStats[] SelectPhase(
+            MatDataTransferBatchFrameStats[] samples,
+            int sampleCount,
+            MatDataTransferBatchPhase phase)
+        {
+            int count = 0;
+            for (int i = 0; i < sampleCount; i++)
             {
-                writer.WriteLine("## " + scenario.TestName);
-                writer.WriteLine();
-                writer.WriteLine("| Metric | Median | P95 | Max |");
-                writer.WriteLine("|---|---:|---:|---:|");
-                WriteMarkdownRow(writer, "Frame ms", frame);
-                WriteMarkdownRow(writer, "GC bytes", gc);
-                WriteMarkdownRow(writer, "Submit ms", submit.Scale(1.0 / 1000000.0));
-                WriteMarkdownRow(writer, "Resolve ms", resolve.Scale(1.0 / 1000000.0));
-                WriteMarkdownRow(writer, "Write ms", write.Scale(1.0 / 1000000.0));
-                writer.WriteLine();
-                writer.WriteLine("- Raw CSV: `" + rawPath + "`");
-                writer.WriteLine("- Expected Payload: `" + scenario.ExpectedPayloadCount + "`");
-                writer.WriteLine("- Expected Command: `" + scenario.ExpectedCommandCount + "`");
-                writer.WriteLine();
+                if (samples[i].Phase == phase)
+                    count++;
             }
+
+            MatDataTransferBatchFrameStats[] result =
+                new MatDataTransferBatchFrameStats[count];
+            int targetIndex = 0;
+            for (int i = 0; i < sampleCount; i++)
+            {
+                if (samples[i].Phase == phase)
+                    result[targetIndex++] = samples[i];
+            }
+
+            return result;
         }
 
         private static Summary Summarize(
@@ -274,6 +375,14 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                     return sample.RejectedCount;
                 case ValueKind.WriterFailed:
                     return sample.WriterFailedCount;
+                case ValueKind.SyncCalls:
+                    return sample.SyncCallCount;
+                case ValueKind.SyncNs:
+                    return sample.SyncElapsedNanoseconds;
+                case ValueKind.SyncGcBytes:
+                    return sample.SyncGcAllocatedBytes;
+                case ValueKind.PipelineExecutions:
+                    return sample.PipelineExecutionCount;
                 case ValueKind.FrameMs:
                 default:
                     return sample.FrameMilliseconds;
@@ -304,7 +413,7 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             return total / values.Length;
         }
 
-        private static void WriteMarkdownRow(StreamWriter writer, string name, Summary summary)
+        private static void WriteMarkdownRow(TextWriter writer, string name, Summary summary)
         {
             writer.Write("| ");
             writer.Write(name);
@@ -345,7 +454,11 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             Applied,
             Overridden,
             Rejected,
-            WriterFailed
+            WriterFailed,
+            SyncCalls,
+            SyncNs,
+            SyncGcBytes,
+            PipelineExecutions
         }
 
         private readonly struct Summary

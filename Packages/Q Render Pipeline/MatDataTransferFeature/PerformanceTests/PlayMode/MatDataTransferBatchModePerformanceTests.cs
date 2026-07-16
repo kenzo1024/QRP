@@ -7,6 +7,8 @@ using Rendering.MatDataTransfer.Runtime;
 using Unity.PerformanceTesting;
 using Unity.Profiling;
 using UnityEngine;
+using UnityEngine.Rendering;
+using UnityEngine.Rendering.Universal;
 using UnityEngine.TestTools;
 #if UNITY_EDITOR
 using UnityEditor;
@@ -25,10 +27,22 @@ namespace Rendering.MatDataTransfer.PerformanceTests
 
         private GameObject m_Root;
         private Camera m_Camera;
+        private bool m_OwnsCamera;
+        private RenderTexture m_RenderTarget;
+        private UniversalRenderPipeline.SingleCameraRequest m_RenderRequest;
         private MatDataTransferBatchLoadDriver m_Driver;
         private int m_OriginalCapacity;
         private bool m_ManualPipelineFallback;
         private MethodInfo m_ExecutePipelineMethod;
+        private RenderPipelineAsset m_OriginalRenderPipelineAsset;
+        private bool m_RenderPipelineWasConfigured;
+
+        private sealed class MeasurementState
+        {
+            public readonly List<MatDataTransferBatchFrameStats> Samples =
+                new List<MatDataTransferBatchFrameStats>();
+            public int LogicalFrame;
+        }
 
         [TearDown]
         public void TearDown()
@@ -41,8 +55,12 @@ namespace Rendering.MatDataTransfer.PerformanceTests
 
             if (m_Root != null)
                 UnityEngine.Object.Destroy(m_Root);
-            if (m_Camera != null)
+            if (m_OwnsCamera && m_Camera != null)
                 UnityEngine.Object.Destroy(m_Camera.gameObject);
+            if (m_RenderTarget != null)
+                UnityEngine.Object.Destroy(m_RenderTarget);
+
+            RestoreRenderPipeline();
         }
 
         [UnityTest, Performance]
@@ -52,9 +70,9 @@ namespace Rendering.MatDataTransfer.PerformanceTests
         }
 
         [UnityTest, Performance]
-        public IEnumerator B00_EmptyDriver()
+        public IEnumerator B00_PhasedBaseline()
         {
-            yield return RunScenario(MatDataTransferBatchScenario.B00_EmptyDriver());
+            yield return RunScenario(MatDataTransferBatchScenario.B00_PhasedBaseline());
         }
 
         [UnityTest, Performance]
@@ -115,54 +133,111 @@ namespace Rendering.MatDataTransfer.PerformanceTests
         {
             yield return EnsureFeatureReady();
             ConfigureFeature(scenario);
-            BuildDriver(scenario);
-            yield return WaitForInstancesReady(scenario);
+            PrepareDriver(scenario);
 
+            MeasurementState state = new MeasurementState();
             using (MetricRecorders recorders = new MetricRecorders())
             {
-                int logicalFrame = 0;
-                for (int i = 0; i < scenario.WarmupFrames; i++)
+                yield return MeasurePhase(
+                    scenario,
+                    MatDataTransferBatchPhase.UrpBaseline,
+                    false,
+                    recorders,
+                    state);
+
+                m_Driver.CreateRenderObjects();
+                yield return null;
+                yield return MeasurePhase(
+                    scenario,
+                    MatDataTransferBatchPhase.RendererBaseline,
+                    false,
+                    recorders,
+                    state);
+
+                m_Driver.AttachInstances();
+                yield return WaitForInstancesReady(scenario);
+                yield return MeasurePhase(
+                    scenario,
+                    MatDataTransferBatchPhase.InstanceIdle,
+                    false,
+                    recorders,
+                    state);
+
+                if (scenario.SourceCount > 0)
                 {
-                    m_Driver.SubmitFrame(logicalFrame++);
-                    yield return null;
-                    ExecuteManualPipelineIfNeeded(scenario);
+                    yield return MeasurePhase(
+                        scenario,
+                        MatDataTransferBatchPhase.Submission,
+                        true,
+                        recorders,
+                        state);
+                    m_Driver.AssertMaterialValues(state.LogicalFrame - 1, 16);
                 }
 
-                MatDataTransferBatchFrameStats[] samples =
-                    new MatDataTransferBatchFrameStats[scenario.MeasurementFrames];
+                WriteReport(scenario, state.Samples.ToArray(), state.Samples.Count);
+            }
+        }
 
-                for (int i = 0; i < scenario.MeasurementFrames; i++)
+        private IEnumerator MeasurePhase(
+            MatDataTransferBatchScenario scenario,
+            MatDataTransferBatchPhase phase,
+            bool submit,
+            MetricRecorders recorders,
+            MeasurementState state)
+        {
+            for (int i = 0; i < scenario.WarmupFrames; i++)
+            {
+                if (submit)
+                    m_Driver.SubmitFrame(state.LogicalFrame);
+
+                RequestCameraRender();
+                state.LogicalFrame++;
+                yield return null;
+                ExecuteManualPipelineIfNeeded();
+            }
+
+            for (int i = 0; i < scenario.MeasurementFrames; i++)
+            {
+                MatDataTransferFeature.Instance.ResetInstanceSyncStats();
+                double start = Time.realtimeSinceStartupAsDouble;
+                if (submit)
+                    m_Driver.SubmitFrame(state.LogicalFrame);
+
+                RequestCameraRender();
+                yield return null;
+                long manualPipelineNanoseconds = ExecuteManualPipelineIfNeeded();
+                MatDataTransferInstanceSyncStats syncStats =
+                    MatDataTransferFeature.Instance.GetInstanceSyncStats();
+
+                MatDataTransferBatchFrameStats stats = CollectStats(
+                    scenario,
+                    phase,
+                    PipelineMode,
+                    recorders,
+                    state.LogicalFrame,
+                    (Time.realtimeSinceStartupAsDouble - start) * 1000.0,
+                    manualPipelineNanoseconds,
+                    syncStats);
+                AssertFrameStats(scenario, phase, stats);
+                state.Samples.Add(stats);
+
+                if (phase == MatDataTransferBatchPhase.Submission
+                    || (scenario.SourceCount == 0 && phase == MatDataTransferBatchPhase.InstanceIdle))
                 {
-                    double start = Time.realtimeSinceStartupAsDouble;
-                    m_Driver.SubmitFrame(logicalFrame);
-                    yield return null;
-                    long manualPipelineNanoseconds = ExecuteManualPipelineIfNeeded(scenario);
-
-                    MatDataTransferBatchFrameStats stats = CollectStats(
-                        scenario,
-                        recorders,
-                        logicalFrame,
-                        (Time.realtimeSinceStartupAsDouble - start) * 1000.0,
-                        manualPipelineNanoseconds);
-                    AssertFrameStats(scenario, stats);
-                    samples[i] = stats;
-
                     Measure.Custom(FrameMsGroup, stats.FrameMilliseconds);
                     Measure.Custom(GcBytesGroup, stats.GcAllocatedBytes);
                     Measure.Custom(SubmitMsGroup, stats.SubmitTotalNanoseconds / 1000000.0);
                     Measure.Custom(ResolveMsGroup, stats.PipelineResolveNanoseconds / 1000000.0);
                     Measure.Custom(WriteMsGroup, stats.PipelineWriteNanoseconds / 1000000.0);
-
-                    logicalFrame++;
                 }
 
-                m_Driver.AssertMaterialValues(logicalFrame - 1, 16);
-                WriteReport(scenario, samples, samples.Length);
+                state.LogicalFrame++;
             }
         }
 
         private IEnumerator EnsureFeatureReady()
         {
+            ConfigureRenderPipeline();
             EnsureCamera();
             for (int i = 0; i < 60; i++)
             {
@@ -172,26 +247,102 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                 yield return null;
             }
 
-            if (TryBootstrapFeatureFromRendererAsset())
+            if (TryBootstrapFeatureFromRendererAsset(AllowManualPipelineFallback()))
             {
                 yield return null;
                 yield break;
             }
 
-            Assert.Fail("MatDataTransferFeature.Instance is missing. Check PC_Renderer asset and URP settings.");
+            Assert.Fail(
+                "MatDataTransferFeature.Instance was not created by URP. "
+                + "The batch test requires the real RenderGraph path. "
+                + "Use -mdtAllowManualPipeline only for explicitly labelled diagnostic runs.");
+        }
+
+        private void ConfigureRenderPipeline()
+        {
+#if UNITY_EDITOR
+            const string PipelineAssetPath = "Assets/Settings/PC_RPAsset.asset";
+            RenderPipelineAsset pipelineAsset =
+                AssetDatabase.LoadAssetAtPath<RenderPipelineAsset>(PipelineAssetPath);
+            Assert.That(pipelineAsset, Is.Not.Null, "PC RenderPipelineAsset is missing: " + PipelineAssetPath);
+
+            m_OriginalRenderPipelineAsset = QualitySettings.renderPipeline;
+            m_RenderPipelineWasConfigured = true;
+            QualitySettings.renderPipeline = pipelineAsset;
+            Assert.That(
+                PrepareRenderPipeline(pipelineAsset),
+                Is.True,
+                "Unity failed to prepare the PC RenderPipeline.");
+#endif
+        }
+
+        private void RestoreRenderPipeline()
+        {
+#if UNITY_EDITOR
+            if (!m_RenderPipelineWasConfigured)
+                return;
+
+            QualitySettings.renderPipeline = m_OriginalRenderPipelineAsset;
+            PrepareRenderPipeline(m_OriginalRenderPipelineAsset);
+            m_OriginalRenderPipelineAsset = null;
+            m_RenderPipelineWasConfigured = false;
+#endif
+        }
+
+        private static bool PrepareRenderPipeline(RenderPipelineAsset pipelineAsset)
+        {
+            MethodInfo prepareMethod = typeof(RenderPipelineManager).GetMethod(
+                "TryPrepareRenderPipeline",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(prepareMethod, Is.Not.Null, "Unity RenderPipeline preparation API is unavailable.");
+            return (bool)prepareMethod.Invoke(null, new object[] { pipelineAsset });
         }
 
         private void EnsureCamera()
         {
             if (Camera.main != null)
+            {
+                m_Camera = Camera.main;
+                EnsureRenderRequest();
                 return;
+            }
 
             GameObject cameraObject = new GameObject("MDT_Batch_Camera");
             Camera camera = cameraObject.AddComponent<Camera>();
             m_Camera = camera;
+            m_OwnsCamera = true;
             camera.tag = "MainCamera";
             camera.transform.position = new Vector3(0f, 12f, -24f);
             camera.transform.rotation = Quaternion.Euler(60f, 0f, 0f);
+            EnsureRenderRequest();
+        }
+
+        private void EnsureRenderRequest()
+        {
+            if (m_RenderTarget == null)
+            {
+                m_RenderTarget = new RenderTexture(64, 64, 24, RenderTextureFormat.ARGB32)
+                {
+                    name = "MDT_Batch_RenderTarget"
+                };
+                m_RenderTarget.Create();
+            }
+
+            if (m_RenderRequest == null)
+            {
+                m_RenderRequest = new UniversalRenderPipeline.SingleCameraRequest
+                {
+                    destination = m_RenderTarget
+                };
+            }
+        }
+
+        private void RequestCameraRender()
+        {
+            Assert.That(m_Camera, Is.Not.Null, "Batch test camera is missing.");
+            Assert.That(RenderPipelineManager.currentPipeline, Is.Not.Null, "URP is not active.");
+            RenderPipeline.SubmitRenderRequest(m_Camera, m_RenderRequest);
         }
 
         private void ConfigureFeature(MatDataTransferBatchScenario scenario)
@@ -210,11 +361,14 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             });
         }
 
-        private long ExecuteManualPipelineIfNeeded(MatDataTransferBatchScenario scenario)
+        private MatDataTransferBatchPipelineMode PipelineMode =>
+            m_ManualPipelineFallback
+                ? MatDataTransferBatchPipelineMode.Manual
+                : MatDataTransferBatchPipelineMode.RenderGraph;
+
+        private long ExecuteManualPipelineIfNeeded()
         {
-            if (!m_ManualPipelineFallback || scenario.ExpectedPayloadCount == 0)
-                return 0L;
-            if (MatDataTransferLogging.Instance.LastReceipts.Count == scenario.ExpectedPayloadCount)
+            if (!m_ManualPipelineFallback)
                 return 0L;
 
             long start = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -223,7 +377,19 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             return elapsed * 1000000000L / System.Diagnostics.Stopwatch.Frequency;
         }
 
-        private bool TryBootstrapFeatureFromRendererAsset()
+        private static bool AllowManualPipelineFallback()
+        {
+            string[] args = Environment.GetCommandLineArgs();
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (string.Equals(args[i], "-mdtAllowManualPipeline", StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private bool TryBootstrapFeatureFromRendererAsset(bool useManualPipeline)
         {
 #if UNITY_EDITOR
             UnityEngine.Object[] assets = AssetDatabase.LoadAllAssetsAtPath("Assets/Settings/PC_Renderer.asset");
@@ -234,21 +400,26 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                     continue;
 
                 feature.Create();
-                m_ManualPipelineFallback = true;
-                m_ExecutePipelineMethod = typeof(MatDataTransferFeature).GetMethod(
-                    "ExecuteRequestPipeline",
-                    BindingFlags.Instance | BindingFlags.NonPublic);
-                return MatDataTransferFeature.Instance != null && m_ExecutePipelineMethod != null;
+                m_ManualPipelineFallback = useManualPipeline;
+                if (useManualPipeline)
+                {
+                    m_ExecutePipelineMethod = typeof(MatDataTransferFeature).GetMethod(
+                        "ExecuteRequestPipeline",
+                        BindingFlags.Instance | BindingFlags.NonPublic);
+                }
+
+                return MatDataTransferFeature.Instance != null
+                    && (!useManualPipeline || m_ExecutePipelineMethod != null);
             }
 #endif
             return false;
         }
 
-        private void BuildDriver(MatDataTransferBatchScenario scenario)
+        private void PrepareDriver(MatDataTransferBatchScenario scenario)
         {
             m_Root = new GameObject("MatDataTransferBatchModePerformance");
             m_Driver = m_Root.AddComponent<MatDataTransferBatchLoadDriver>();
-            m_Driver.Build(scenario);
+            m_Driver.Prepare(scenario);
         }
 
         private IEnumerator WaitForInstancesReady(MatDataTransferBatchScenario scenario)
@@ -270,21 +441,28 @@ namespace Rendering.MatDataTransfer.PerformanceTests
 
         private static MatDataTransferBatchFrameStats CollectStats(
             MatDataTransferBatchScenario scenario,
+            MatDataTransferBatchPhase phase,
+            MatDataTransferBatchPipelineMode pipelineMode,
             MetricRecorders recorders,
             int logicalFrame,
             double frameMilliseconds,
-            long manualPipelineNanoseconds)
+            long manualPipelineNanoseconds,
+            MatDataTransferInstanceSyncStats syncStats)
         {
             IReadOnlyList<ParamWriteResult> receipts = MatDataTransferLogging.Instance.LastReceipts;
             MatDataTransferBatchFrameStats stats = new MatDataTransferBatchFrameStats
             {
+                Phase = phase,
+                PipelineMode = pipelineMode,
                 FrameIndex = logicalFrame,
                 FrameMilliseconds = frameMilliseconds,
                 GcAllocatedBytes = recorders.GcAllocatedBytes,
                 ManagedHeapBytes = recorders.ManagedHeapBytes,
-                ActiveInstanceCount = MatDataTransferFeature.Instance.ActiveInstanceCount,
+                ActiveInstanceCount = syncStats.RegisteredInstanceCount,
                 PayloadCount = receipts.Count,
-                GroupCount = scenario.SourceCount > 0 ? scenario.ExpectedGroupCount : 0,
+                GroupCount = phase == MatDataTransferBatchPhase.Submission
+                    ? scenario.ExpectedGroupCount
+                    : 0,
                 CommandCount = 0,
                 TraceCount = scenario.EnableLogging ? MatDataTransferLogging.Instance.TimelineRecords.Count : 0,
                 TimelineRecordCount = scenario.EnableLogging ? MatDataTransferLogging.Instance.TimelineRecords.Count : 0,
@@ -295,16 +473,19 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                     ? recorders.PassPipelineNanoseconds
                     : manualPipelineNanoseconds,
                 PipelineDrainProvidersNanoseconds = recorders.PipelineDrainProvidersNanoseconds,
-                PipelineResolveNanoseconds = recorders.PipelineResolveNanoseconds != 0
-                    ? recorders.PipelineResolveNanoseconds
-                    : manualPipelineNanoseconds,
+                PipelineResolveNanoseconds = recorders.PipelineResolveNanoseconds,
                 PipelineResolveTargetNanoseconds = recorders.PipelineResolveTargetNanoseconds,
                 PipelineResolveConflictNanoseconds = recorders.PipelineResolveConflictNanoseconds,
                 PipelineWriteNanoseconds = recorders.PipelineWriteNanoseconds,
                 PipelineWriteResolveMaterialNanoseconds = recorders.PipelineWriteResolveMaterialNanoseconds,
                 PipelineWriteSetValueNanoseconds = recorders.PipelineWriteSetValueNanoseconds,
                 LoggingCaptureNanoseconds = recorders.LoggingCaptureNanoseconds,
-                LoggingCommitTimelineNanoseconds = recorders.LoggingCommitTimelineNanoseconds
+                LoggingCommitTimelineNanoseconds = recorders.LoggingCommitTimelineNanoseconds,
+                SyncCallCount = syncStats.CallCount,
+                SyncElapsedNanoseconds = syncStats.ElapsedNanoseconds,
+                SyncGcAllocatedBytes = syncStats.GcAllocatedBytes,
+                LiveInstanceCount = syncStats.LiveInstanceCount,
+                PipelineExecutionCount = syncStats.PipelineExecutionCount
             };
 
             for (int i = 0; i < receipts.Count; i++)
@@ -332,16 +513,29 @@ namespace Rendering.MatDataTransfer.PerformanceTests
 
         private static void AssertFrameStats(
             MatDataTransferBatchScenario scenario,
+            MatDataTransferBatchPhase phase,
             MatDataTransferBatchFrameStats stats)
         {
-            Assert.That(stats.ActiveInstanceCount, Is.GreaterThanOrEqualTo(scenario.ObjectCount));
-            Assert.That(stats.PayloadCount, Is.EqualTo(scenario.ExpectedPayloadCount), scenario.TestName + " payload count mismatch.");
-            Assert.That(stats.GroupCount, Is.EqualTo(scenario.SourceCount > 0 ? scenario.ExpectedGroupCount : 0), scenario.TestName + " group count mismatch.");
-            Assert.That(stats.CommandCount, Is.EqualTo(scenario.ExpectedCommandCount), scenario.TestName + " command count mismatch.");
-            Assert.That(stats.AppliedCount, Is.EqualTo(scenario.ExpectedAppliedCount), scenario.TestName + " applied count mismatch.");
-            Assert.That(stats.OverriddenCount, Is.EqualTo(scenario.ExpectedOverriddenCount), scenario.TestName + " overridden count mismatch.");
+            bool isSubmission = phase == MatDataTransferBatchPhase.Submission;
+            int expectedInstances = phase == MatDataTransferBatchPhase.UrpBaseline
+                || phase == MatDataTransferBatchPhase.RendererBaseline
+                    ? 0
+                    : scenario.ObjectCount;
+
+            Assert.That(stats.ActiveInstanceCount, Is.EqualTo(expectedInstances));
+            Assert.That(stats.PayloadCount, Is.EqualTo(isSubmission ? scenario.ExpectedPayloadCount : 0), scenario.TestName + " payload count mismatch.");
+            Assert.That(stats.GroupCount, Is.EqualTo(isSubmission ? scenario.ExpectedGroupCount : 0), scenario.TestName + " group count mismatch.");
+            Assert.That(stats.CommandCount, Is.EqualTo(isSubmission ? scenario.ExpectedCommandCount : 0), scenario.TestName + " command count mismatch.");
+            Assert.That(stats.AppliedCount, Is.EqualTo(isSubmission ? scenario.ExpectedAppliedCount : 0), scenario.TestName + " applied count mismatch.");
+            Assert.That(stats.OverriddenCount, Is.EqualTo(isSubmission ? scenario.ExpectedOverriddenCount : 0), scenario.TestName + " overridden count mismatch.");
             Assert.That(stats.RejectedCount, Is.EqualTo(0), scenario.TestName + " has rejected requests.");
             Assert.That(stats.WriterFailedCount, Is.EqualTo(0), scenario.TestName + " has writer failures.");
+
+            if (phase == MatDataTransferBatchPhase.InstanceIdle || isSubmission)
+            {
+                Assert.That(stats.SyncCallCount, Is.GreaterThan(0), scenario.TestName + " did not execute instance sync.");
+                Assert.That(stats.PipelineExecutionCount, Is.GreaterThan(0), scenario.TestName + " did not execute the request pipeline.");
+            }
         }
 
         private static void WriteReport(

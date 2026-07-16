@@ -38,7 +38,7 @@ namespace Rendering.MatDataTransfer.PerformanceTests
         public int ObjectCount => m_Objects != null ? m_Objects.Length : 0;
         public int PropertyCount => m_Properties != null ? m_Properties.Length : 0;
 
-        internal void Build(MatDataTransferBatchScenario scenario)
+        internal void Prepare(MatDataTransferBatchScenario scenario)
         {
             m_Scenario = scenario;
             ClearGeneratedObjects();
@@ -47,7 +47,31 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             EnsureMaterial();
             CacheProperties(scenario.PropertyCount);
             CacheSources(scenario.SourceCount);
-            CreateObjects(scenario.ObjectCount);
+            m_Objects = null;
+        }
+
+        internal void CreateRenderObjects()
+        {
+            if (m_Objects != null)
+                return;
+
+            CreateObjects(m_Scenario.ObjectCount);
+        }
+
+        internal void AttachInstances()
+        {
+            if (m_Objects == null)
+                throw new InvalidOperationException("Render objects must be created before instances are attached.");
+
+            for (int i = 0; i < m_Objects.Length; i++)
+            {
+                MatDataTransferObject target = m_Objects[i];
+                if (target.Instance != null)
+                    continue;
+
+                target.Instance = target.GameObject.AddComponent<MatDataTransferInstance>();
+                target.Instance.RefreshBindings();
+            }
         }
 
         public void Clear()
@@ -289,10 +313,7 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                 MeshRenderer renderer = item.AddComponent<MeshRenderer>();
                 renderer.sharedMaterial = m_SharedMaterial;
 
-                MatDataTransferInstance instance = item.AddComponent<MatDataTransferInstance>();
-                instance.RefreshBindings();
-
-                m_Objects[i] = new MatDataTransferObject(instance, renderer);
+                m_Objects[i] = new MatDataTransferObject(item, renderer);
             }
         }
 
@@ -409,15 +430,17 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                 DestroyImmediate(target);
         }
 
-        private readonly struct MatDataTransferObject
+        private sealed class MatDataTransferObject
         {
-            public readonly MatDataTransferInstance Instance;
+            public readonly GameObject GameObject;
             public readonly MeshRenderer Renderer;
+            public MatDataTransferInstance Instance;
 
-            public MatDataTransferObject(MatDataTransferInstance instance, MeshRenderer renderer)
+            public MatDataTransferObject(GameObject gameObject, MeshRenderer renderer)
             {
-                Instance = instance;
+                GameObject = gameObject;
                 Renderer = renderer;
+                Instance = null;
             }
         }
 
