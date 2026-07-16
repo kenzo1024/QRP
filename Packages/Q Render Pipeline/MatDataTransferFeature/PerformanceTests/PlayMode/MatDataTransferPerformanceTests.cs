@@ -22,6 +22,8 @@ namespace Rendering.MatDataTransfer.PerformanceTests
         [SetUp]
         public void SetUp()
         {
+            m_Catalogs.Clear();
+            m_Payloads.Clear();
             MatDataTransferLogging.Instance.ApplySettings(new MatDataTransferLoggingSettings());
             CreateFixedFixture();
         }
@@ -38,6 +40,9 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                 Object.DestroyImmediate(m_Material);
             if (m_Root != null)
                 Object.DestroyImmediate(m_Root);
+
+            m_Catalogs.Clear();
+            m_Payloads.Clear();
         }
 
         [Test, Performance]
@@ -58,6 +63,7 @@ namespace Rendering.MatDataTransfer.PerformanceTests
         public void Resolver_CompetingRequests_Baseline(int requestCount)
         {
             FillPayloads(requestCount);
+            ResolveSingleWinningCommand();
 
             Measure.Method(() => m_Resolver.Resolve(m_Catalogs, m_Registry, m_Payloads))
                 .WarmupCount(10)
@@ -70,10 +76,7 @@ namespace Rendering.MatDataTransfer.PerformanceTests
         public void Writer_SingleCommand_Baseline()
         {
             FillPayloads(1);
-            IReadOnlyList<ParamWriteCommand> commands = m_Resolver.Resolve(
-                m_Catalogs,
-                m_Registry,
-                m_Payloads);
+            IReadOnlyList<ParamWriteCommand> commands = ResolveSingleWinningCommand();
 
             Measure.Method(() => m_Writer.Apply(commands))
                 .WarmupCount(10)
@@ -105,12 +108,27 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             {
                 new ShaderPropertyInfo(propertyName, "Base Color", ParamValueType.Color)
             });
+            Assert.That(m_Catalog.Properties, Has.Count.EqualTo(1));
+            m_Catalog.Properties[0].Status = CatalogPropertyStatus.Ok;
             m_Catalogs.Add(m_Catalog);
 
             m_Registry = new MatDataTransferInstanceRegister(1);
             Assert.That(m_Registry.TryRegister(instance, out _), Is.True);
             m_Resolver = new MaterialParameterResolver();
             m_Writer = new MaterialParameterWriter();
+        }
+
+        private IReadOnlyList<ParamWriteCommand> ResolveSingleWinningCommand()
+        {
+            IReadOnlyList<ParamWriteCommand> commands = m_Resolver.Resolve(
+                m_Catalogs,
+                m_Registry,
+                m_Payloads);
+            Assert.That(
+                commands,
+                Has.Count.EqualTo(1),
+                "Performance fixture must resolve exactly one winning write command.");
+            return commands;
         }
 
         private void FillPayloads(int count)

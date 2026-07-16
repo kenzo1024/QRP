@@ -23,3 +23,14 @@ MonoBehaviour:
     Priority: 0
     Enabled: 1
     Description:
+  - SemanticKey: common._testfloat
+    PropertyNames:
+    - _TestFloat
+    ValueType: 0
+    IncludeShaders:
+    - QRP/Unlit
+    ExcludeShaders: []
+    ShaderMatchMode: 0
+    Priority: 0
+    Enabled: 1
+    Description:

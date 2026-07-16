@@ -33,6 +33,10 @@ namespace Rendering.MatDataTransfer.Runtime
             new GenericMaterialParameterProviderSettings();
         [SerializeField] private MatDataTransferLoggingSettings m_LoggingSettings =
             new MatDataTransferLoggingSettings();
+        [SerializeField] private ParamWriteMethod m_EditModeWriteMode =
+            ParamWriteMethod.MaterialPropertyBlock;
+        [SerializeField] private ParamWriteMethod m_RuntimeWriteMode =
+            ParamWriteMethod.MaterialInstance;
         [SerializeField] private int m_MaxInstanceCount = DefaultMaxInstanceCount;
 
         #endregion
@@ -48,6 +52,8 @@ namespace Rendering.MatDataTransfer.Runtime
         public IReadOnlyList<ShaderPropertyCatalog> Catalogs => m_Catalogs;
         public GenericMaterialParameterProviderSettings GenericProviderSettings => m_GenericProviderSettings;
         public MatDataTransferLoggingSettings LoggingSettings => m_LoggingSettings;
+        public ParamWriteMethod EditModeWriteMode => m_EditModeWriteMode;
+        public ParamWriteMethod RuntimeWriteMode => m_RuntimeWriteMode;
         public int MaxInstanceCount => m_MaxInstanceCount;
         public int ActiveInstanceCount => GetSyncedActiveInstanceCount();
 
@@ -126,6 +132,7 @@ namespace Rendering.MatDataTransfer.Runtime
 #endif
             ApplyInstanceCapacitySetting();
             ApplyLoggerSettings();
+            ApplyWriterSettings();
             RefreshCatalogCaches();
         }
 
@@ -188,7 +195,28 @@ namespace Rendering.MatDataTransfer.Runtime
             if (m_Catalogs == null)
                 m_Catalogs = new List<ShaderPropertyCatalog>();
 
+            m_EditModeWriteMode = NormalizeWriteMethod(
+                m_EditModeWriteMode,
+                ParamWriteMethod.MaterialPropertyBlock);
+            m_RuntimeWriteMode = NormalizeWriteMethod(
+                m_RuntimeWriteMode,
+                ParamWriteMethod.MaterialInstance);
             m_MaxInstanceCount = NormalizeCapacity(m_MaxInstanceCount);
+        }
+
+        private static ParamWriteMethod NormalizeWriteMethod(
+            ParamWriteMethod writeMethod,
+            ParamWriteMethod fallback)
+        {
+            switch (writeMethod)
+            {
+                case ParamWriteMethod.MaterialPropertyBlock:
+                case ParamWriteMethod.MaterialInstance:
+                case ParamWriteMethod.SharedMaterial:
+                    return writeMethod;
+                default:
+                    return fallback;
+            }
         }
 
         private void ApplyInstanceCapacitySetting()

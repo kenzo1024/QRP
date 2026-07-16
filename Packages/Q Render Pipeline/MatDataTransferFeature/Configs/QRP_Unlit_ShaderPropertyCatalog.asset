@@ -13,7 +13,7 @@ MonoBehaviour:
   m_Name: QRP_Unlit_ShaderPropertyCatalog
   m_EditorClassIdentifier: REP.MatDataTransfer.Runtime::Rendering.MatDataTransfer.Runtime.ShaderPropertyCatalog
   catalogVersion: 2.0
-  syncTime: 2026-07-09 03:14:44
+  syncTime: 2026-07-15 08:42:41
   shaderGuid: 6a12d72a332b4a94aa08c930676f5c24
   shaderName: QRP/Unlit
   shader: {fileID: 4800000, guid: 6a12d72a332b4a94aa08c930676f5c24, type: 3}
@@ -31,6 +31,7 @@ MonoBehaviour:
         ColorValue: {r: 1, g: 1, b: 1, a: 1}
         TextureValue: {fileID: 0}
     SuggestedSemanticKey: common._basecolor
+    SemanticKeySource: 1
     Status: 0
   - PropertyInfo:
       PropertyName: _TestFloat
@@ -44,5 +45,171 @@ MonoBehaviour:
         VectorValue: {x: 0, y: 0, z: 0, w: 0}
         ColorValue: {r: 0, g: 0, b: 0, a: 0}
         TextureValue: {fileID: 0}
-    SuggestedSemanticKey: qrp.unlit._testfloat
+    SuggestedSemanticKey: common._testfloat
+    SemanticKeySource: 1
+    Status: 0
+  - PropertyInfo:
+      PropertyName: _TestFloat0
+      InspectorDisplayName: Test Float 0
+      ValueType: 0
+      Attributes:
+      - MatDataTransfer
+      DefaultValue:
+        Type: 0
+        FloatValue: 0
+        VectorValue: {x: 0, y: 0, z: 0, w: 0}
+        ColorValue: {r: 0, g: 0, b: 0, a: 0}
+        TextureValue: {fileID: 0}
+    SuggestedSemanticKey: qrp.unlit._testfloat0
+    SemanticKeySource: 0
+    Status: 0
+  - PropertyInfo:
+      PropertyName: _TestFloat1
+      InspectorDisplayName: Test Float 1
+      ValueType: 0
+      Attributes:
+      - MatDataTransfer
+      DefaultValue:
+        Type: 0
+        FloatValue: 0
+        VectorValue: {x: 0, y: 0, z: 0, w: 0}
+        ColorValue: {r: 0, g: 0, b: 0, a: 0}
+        TextureValue: {fileID: 0}
+    SuggestedSemanticKey: qrp.unlit._testfloat1
+    SemanticKeySource: 0
+    Status: 0
+  - PropertyInfo:
+      PropertyName: _TestFloat2
+      InspectorDisplayName: Test Float 2
+      ValueType: 0
+      Attributes:
+      - MatDataTransfer
+      DefaultValue:
+        Type: 0
+        FloatValue: 0
+        VectorValue: {x: 0, y: 0, z: 0, w: 0}
+        ColorValue: {r: 0, g: 0, b: 0, a: 0}
+        TextureValue: {fileID: 0}
+    SuggestedSemanticKey: qrp.unlit._testfloat2
+    SemanticKeySource: 0
+    Status: 0
+  - PropertyInfo:
+      PropertyName: _TestColor0
+      InspectorDisplayName: Test Color 0
+      ValueType: 1
+      Attributes:
+      - MatDataTransfer
+      DefaultValue:
+        Type: 1
+        FloatValue: 0
+        VectorValue: {x: 0, y: 0, z: 0, w: 0}
+        ColorValue: {r: 1, g: 1, b: 1, a: 1}
+        TextureValue: {fileID: 0}
+    SuggestedSemanticKey: qrp.unlit._testcolor0
+    SemanticKeySource: 0
+    Status: 0
+  - PropertyInfo:
+      PropertyName: _TestColor1
+      InspectorDisplayName: Test Color 1
+      ValueType: 1
+      Attributes:
+      - MatDataTransfer
+      DefaultValue:
+        Type: 1
+        FloatValue: 0
+        VectorValue: {x: 0, y: 0, z: 0, w: 0}
+        ColorValue: {r: 1, g: 1, b: 1, a: 1}
+        TextureValue: {fileID: 0}
+    SuggestedSemanticKey: qrp.unlit._testcolor1
+    SemanticKeySource: 0
+    Status: 0
+  - PropertyInfo:
+      PropertyName: _TestColor2
+      InspectorDisplayName: Test Color 2
+      ValueType: 1
+      Attributes:
+      - MatDataTransfer
+      DefaultValue:
+        Type: 1
+        FloatValue: 0
+        VectorValue: {x: 0, y: 0, z: 0, w: 0}
+        ColorValue: {r: 1, g: 1, b: 1, a: 1}
+        TextureValue: {fileID: 0}
+    SuggestedSemanticKey: qrp.unlit._testcolor2
+    SemanticKeySource: 0
+    Status: 0
+  - PropertyInfo:
+      PropertyName: _TestColor3
+      InspectorDisplayName: Test Color 3
+      ValueType: 1
+      Attributes:
+      - MatDataTransfer
+      DefaultValue:
+        Type: 1
+        FloatValue: 0
+        VectorValue: {x: 0, y: 0, z: 0, w: 0}
+        ColorValue: {r: 1, g: 1, b: 1, a: 1}
+        TextureValue: {fileID: 0}
+    SuggestedSemanticKey: qrp.unlit._testcolor3
+    SemanticKeySource: 0
+    Status: 0
+  - PropertyInfo:
+      PropertyName: _TestVector0
+      InspectorDisplayName: Test Vector 0
+      ValueType: 2
+      Attributes:
+      - MatDataTransfer
+      DefaultValue:
+        Type: 2
+        FloatValue: 0
+        VectorValue: {x: 0, y: 0, z: 0, w: 0}
+        ColorValue: {r: 0, g: 0, b: 0, a: 0}
+        TextureValue: {fileID: 0}
+    SuggestedSemanticKey: qrp.unlit._testvector0
+    SemanticKeySource: 0
+    Status: 0
+  - PropertyInfo:
+      PropertyName: _TestVector1
+      InspectorDisplayName: Test Vector 1
+      ValueType: 2
+      Attributes:
+      - MatDataTransfer
+      DefaultValue:
+        Type: 2
+        FloatValue: 0
+        VectorValue: {x: 0, y: 0, z: 0, w: 0}
+        ColorValue: {r: 0, g: 0, b: 0, a: 0}
+        TextureValue: {fileID: 0}
+    SuggestedSemanticKey: qrp.unlit._testvector1
+    SemanticKeySource: 0
+    Status: 0
+  - PropertyInfo:
+      PropertyName: _TestVector2
+      InspectorDisplayName: Test Vector 2
+      ValueType: 2
+      Attributes:
+      - MatDataTransfer
+      DefaultValue:
+        Type: 2
+        FloatValue: 0
+        VectorValue: {x: 0, y: 0, z: 0, w: 0}
+        ColorValue: {r: 0, g: 0, b: 0, a: 0}
+        TextureValue: {fileID: 0}
+    SuggestedSemanticKey: qrp.unlit._testvector2
+    SemanticKeySource: 0
+    Status: 0
+  - PropertyInfo:
+      PropertyName: _TestVector3
+      InspectorDisplayName: Test Vector 3
+      ValueType: 2
+      Attributes:
+      - MatDataTransfer
+      DefaultValue:
+        Type: 2
+        FloatValue: 0
+        VectorValue: {x: 0, y: 0, z: 0, w: 0}
+        ColorValue: {r: 0, g: 0, b: 0, a: 0}
+        TextureValue: {fileID: 0}
+    SuggestedSemanticKey: qrp.unlit._testvector3
+    SemanticKeySource: 0
     Status: 0

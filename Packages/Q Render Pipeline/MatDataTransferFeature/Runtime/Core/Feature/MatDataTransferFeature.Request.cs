@@ -20,6 +20,7 @@ namespace Rendering.MatDataTransfer.Runtime
             m_RequestContext = new ParamRequestContext(m_FramePayloads);
             m_Resolver = new MaterialParameterResolver();
             m_Writer = new MaterialParameterWriter();
+            ApplyWriterSettings();
             m_GenericProviderWasEnabled = IsGenericMaterialParameterProviderEnabled;
             m_LastNotReadyReason = null;
         }
@@ -43,6 +44,7 @@ namespace Rendering.MatDataTransfer.Runtime
                 if (!TryValidateReady())
                     return;
 
+                ApplyWriterSettings();
                 using (MatDataTransferProfiling.PassSyncInstances.Auto())
                     SyncLiveInstances();
                 m_RequestContext.BeginFrame();

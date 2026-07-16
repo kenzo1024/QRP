@@ -74,7 +74,9 @@ MonoBehaviour:
   m_GenericProviderSettings:
     Enabled: 1
   m_LoggingSettings:
-    EnableLogging: 1
+    EnableLogging: 0
     AllowReleaseFileLogging: 0
     MaxTimelineFrames: 128
+  m_EditModeWriteMode: 1
+  m_RuntimeWriteMode: 2
   m_MaxInstanceCount: 256

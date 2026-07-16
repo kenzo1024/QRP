@@ -8,6 +8,18 @@ namespace Rendering.MatDataTransfer.Runtime
         private readonly Dictionary<long, PropertyBlockEntry> m_PropertyBlockEntries =
             new Dictionary<long, PropertyBlockEntry>();
         private readonly List<PropertyBlockEntry> m_PendingPropertyBlocks = new List<PropertyBlockEntry>();
+        private ParamWriteMethod m_WriteMode = ParamWriteMethod.MaterialInstance;
+
+        internal void SetWriteMode(ParamWriteMethod writeMode)
+        {
+            if (m_WriteMode == writeMode)
+                return;
+
+            if (m_WriteMode == ParamWriteMethod.MaterialPropertyBlock)
+                ClearWrittenState();
+
+            m_WriteMode = writeMode;
+        }
 
         internal void Apply(IReadOnlyList<ParamWriteCommand> commands)
         {
@@ -55,7 +67,7 @@ namespace Rendering.MatDataTransfer.Runtime
             if (!TryCreateWriteTarget(command, out ParamWriteTarget target, out failureReason))
                 return ParamWriteMethod.None;
 
-            if (ShouldWriteWithPropertyBlock())
+            if (m_WriteMode == ParamWriteMethod.MaterialPropertyBlock)
             {
                 if (TryApplyPropertyBlock(command, target, out failureReason))
                 {
@@ -66,10 +78,19 @@ namespace Rendering.MatDataTransfer.Runtime
                 return ParamWriteMethod.None;
             }
 
-            if (TryApplyMaterial(command, target, out failureReason))
+            bool shared = m_WriteMode == ParamWriteMethod.SharedMaterial;
+            if (m_WriteMode != ParamWriteMethod.MaterialInstance && !shared)
+            {
+                failureReason = $"Unsupported material write mode: {m_WriteMode}.";
+                return ParamWriteMethod.None;
+            }
+
+            if (TryApplyMaterial(command, target, shared, out failureReason))
             {
                 failureReason = string.Empty;
-                return ParamWriteMethod.MaterialInstance;
+                return shared
+                    ? ParamWriteMethod.SharedMaterial
+                    : ParamWriteMethod.MaterialInstance;
             }
 
             if (string.IsNullOrEmpty(failureReason))
@@ -93,23 +114,15 @@ namespace Rendering.MatDataTransfer.Runtime
         private static bool TryApplyMaterial(
             ParamWriteCommand command,
             ParamWriteTarget target,
+            bool shared,
             out string failureReason)
         {
-            if (!TryGetMaterial(target, false, out Material material, out failureReason))
+            if (!TryGetMaterial(target, shared, out Material material, out failureReason))
                 return false;
 
             using (MatDataTransferProfiling.PipelineWriteSetValue.Auto())
                 SetValue(material, target.PropertyId, command.Payload.Identity.Value);
             return true;
-        }
-
-        private static bool ShouldWriteWithPropertyBlock()
-        {
-#if UNITY_EDITOR
-            return !Application.isPlaying;
-#else
-            return false;
-#endif
         }
 
         private static bool TryCreateWriteTarget(

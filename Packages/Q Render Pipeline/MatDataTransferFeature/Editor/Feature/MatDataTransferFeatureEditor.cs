@@ -12,6 +12,8 @@ namespace Rendering.MatDataTransfer.Editor
         private const string CatalogsPropertyName = "m_Catalogs";
         private const string GenericProviderSettingsPropertyName = "m_GenericProviderSettings";
         private const string LoggingSettingsPropertyName = "m_LoggingSettings";
+        private const string EditModeWriteModePropertyName = "m_EditModeWriteMode";
+        private const string RuntimeWriteModePropertyName = "m_RuntimeWriteMode";
         private const string MaxInstanceCountPropertyName = "m_MaxInstanceCount";
 
         private const int RegistryIdMinDigits = 2;
@@ -20,15 +22,30 @@ namespace Rendering.MatDataTransfer.Editor
         private const float RegistryNameWidthRatio = 0.4f;
         private const float RegistryInstanceIdWidthRatio = 0.6f;
         private const float RegistryDividerWidth = 1f;
+        private static readonly ParamWriteMethod[] s_WriteMethods =
+        {
+            ParamWriteMethod.MaterialPropertyBlock,
+            ParamWriteMethod.MaterialInstance,
+            ParamWriteMethod.SharedMaterial
+        };
+        private static readonly GUIContent[] s_WriteMethodLabels =
+        {
+            new GUIContent("Material Property Block"),
+            new GUIContent("Material Instance"),
+            new GUIContent("Shared Material")
+        };
         private static bool s_ShowCatalogs = true;
         private static bool s_ShowInstances = true;
         private static bool s_ShowActiveInstances;
+        private static bool s_ShowMaterialWriting = true;
         private static bool s_ShowRequestProviders = true;
         private static bool s_ShowLogging = true;
 
         private SerializedProperty m_Catalogs;
         private SerializedProperty m_GenericProviderSettings;
         private SerializedProperty m_LoggingSettings;
+        private SerializedProperty m_EditModeWriteMode;
+        private SerializedProperty m_RuntimeWriteMode;
         private SerializedProperty m_MaxInstanceCount;
         private ReorderableList m_CatalogList;
         private readonly List<MatDataTransferInstanceRegisterEntry> m_InstanceEntries =
@@ -40,6 +57,8 @@ namespace Rendering.MatDataTransfer.Editor
             m_Catalogs = serializedObject.FindProperty(CatalogsPropertyName);
             m_GenericProviderSettings = serializedObject.FindProperty(GenericProviderSettingsPropertyName);
             m_LoggingSettings = serializedObject.FindProperty(LoggingSettingsPropertyName);
+            m_EditModeWriteMode = serializedObject.FindProperty(EditModeWriteModePropertyName);
+            m_RuntimeWriteMode = serializedObject.FindProperty(RuntimeWriteModePropertyName);
             m_MaxInstanceCount = serializedObject.FindProperty(MaxInstanceCountPropertyName);
             InitializeCatalogList();
         }
@@ -52,6 +71,8 @@ namespace Rendering.MatDataTransfer.Editor
             DrawCatalogs();
             EditorGUILayout.Space(6f);
             DrawInstances();
+            EditorGUILayout.Space(6f);
+            DrawMaterialWriting();
             EditorGUILayout.Space(6f);
             DrawRequestProviders();
             EditorGUILayout.Space(6f);
@@ -277,6 +298,69 @@ namespace Rendering.MatDataTransfer.Editor
         private static string BuildActiveInstancesSummary(int count)
         {
             return count + " active";
+        }
+
+        private void DrawMaterialWriting()
+        {
+            s_ShowMaterialWriting = InspectorStyleLibrary.DrawFoldoutLayout(
+                s_ShowMaterialWriting,
+                "Material Writing",
+                false);
+            if (!s_ShowMaterialWriting)
+                return;
+
+            using (InspectorStyleLibrary.BeginPanelLayout())
+            {
+                DrawWriteMethodProperty(
+                    m_EditModeWriteMode,
+                    new GUIContent("Edit Mode Write Method"),
+                    ParamWriteMethod.MaterialPropertyBlock);
+                DrawWriteMethodProperty(
+                    m_RuntimeWriteMode,
+                    new GUIContent("Play Mode / Player Write Method"),
+                    ParamWriteMethod.MaterialInstance);
+
+                if (UsesSharedMaterial(m_EditModeWriteMode) || UsesSharedMaterial(m_RuntimeWriteMode))
+                {
+                    EditorGUILayout.HelpBox(
+                        "Shared Material writes affect every Renderer using the same material object. " +
+                        "In Edit Mode, they can also modify the material asset.",
+                        MessageType.Warning);
+                }
+            }
+        }
+
+        private static bool UsesSharedMaterial(SerializedProperty property)
+        {
+            return property != null &&
+                property.intValue == (int)ParamWriteMethod.SharedMaterial;
+        }
+
+        private static void DrawWriteMethodProperty(
+            SerializedProperty property,
+            GUIContent label,
+            ParamWriteMethod fallback)
+        {
+            if (property == null)
+                return;
+
+            int currentIndex = GetWriteMethodIndex((ParamWriteMethod)property.intValue);
+            if (currentIndex < 0)
+                currentIndex = GetWriteMethodIndex(fallback);
+
+            int nextIndex = EditorGUILayout.Popup(label, currentIndex, s_WriteMethodLabels);
+            property.intValue = (int)s_WriteMethods[nextIndex];
+        }
+
+        private static int GetWriteMethodIndex(ParamWriteMethod writeMethod)
+        {
+            for (int i = 0; i < s_WriteMethods.Length; i++)
+            {
+                if (s_WriteMethods[i] == writeMethod)
+                    return i;
+            }
+
+            return -1;
         }
 
         private void DrawRequestProviders()

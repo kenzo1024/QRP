@@ -1,12 +1,15 @@
 {
-    "name": "REP.MatDataTransfer.PerformanceTests",
-    "rootNamespace": "Rendering.MatDataTransfer.PerformanceTests",
+    "name": "REP.MatDataTransfer.PerformanceTests.Editor",
+    "rootNamespace": "Rendering.MatDataTransfer.PerformanceTests.Editor",
     "references": [
         "REP.MatDataTransfer.Runtime",
-        "Unity.PerformanceTesting",
+        "REP.MatDataTransfer.Editor",
+        "REP.MatDataTransfer.PerformanceTests",
         "Unity.RenderPipelines.Universal.Runtime"
     ],
-    "includePlatforms": [],
+    "includePlatforms": [
+        "Editor"
+    ],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
     "overrideReferences": false,
@@ -16,8 +19,5 @@
         "UNITY_INCLUDE_TESTS"
     ],
     "versionDefines": [],
-    "noEngineReferences": false,
-    "optionalUnityReferences": [
-        "TestAssemblies"
-    ]
+    "noEngineReferences": false
 }

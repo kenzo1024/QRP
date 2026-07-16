@@ -13,7 +13,7 @@ MonoBehaviour:
   m_Name: QRP_Lit_ShaderPropertyCatalog
   m_EditorClassIdentifier: REP.MatDataTransfer.Runtime::Rendering.MatDataTransfer.Runtime.ShaderPropertyCatalog
   catalogVersion: 2.0
-  syncTime: 2026-07-09 03:15:11
+  syncTime: 2026-07-14 09:06:45
   shaderGuid: 79ec8f991db0d1d49b6ec017f03b6ebe
   shaderName: QRP/Lit
   shader: {fileID: 4800000, guid: 79ec8f991db0d1d49b6ec017f03b6ebe, type: 3}
@@ -32,4 +32,5 @@ MonoBehaviour:
         ColorValue: {r: 1, g: 1, b: 1, a: 1}
         TextureValue: {fileID: 0}
     SuggestedSemanticKey: common._basecolor
+    SemanticKeySource: 1
     Status: 0
