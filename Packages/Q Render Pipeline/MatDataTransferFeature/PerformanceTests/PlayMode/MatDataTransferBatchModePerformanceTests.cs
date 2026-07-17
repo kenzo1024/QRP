@@ -533,7 +533,8 @@ namespace Rendering.MatDataTransfer.PerformanceTests
 
             if (phase == MatDataTransferBatchPhase.InstanceIdle || isSubmission)
             {
-                Assert.That(stats.SyncCallCount, Is.GreaterThan(0), scenario.TestName + " did not execute instance sync.");
+                Assert.That(stats.SyncCallCount, Is.EqualTo(0), scenario.TestName + " unexpectedly executed instance maintenance.");
+                Assert.That(stats.SyncGcAllocatedBytes, Is.EqualTo(0), scenario.TestName + " allocated GC memory during instance maintenance.");
                 Assert.That(stats.PipelineExecutionCount, Is.GreaterThan(0), scenario.TestName + " did not execute the request pipeline.");
             }
         }

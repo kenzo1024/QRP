@@ -55,7 +55,7 @@ namespace Rendering.MatDataTransfer.Runtime
         public ParamWriteMethod EditModeWriteMode => m_EditModeWriteMode;
         public ParamWriteMethod RuntimeWriteMode => m_RuntimeWriteMode;
         public int MaxInstanceCount => m_MaxInstanceCount;
-        public int ActiveInstanceCount => GetSyncedActiveInstanceCount();
+        public int ActiveInstanceCount => GetActiveInstanceCount();
 
         internal bool IsGenericMaterialParameterProviderEnabled =>
             m_GenericProviderSettings != null && m_GenericProviderSettings.Enabled;
@@ -130,7 +130,7 @@ namespace Rendering.MatDataTransfer.Runtime
 #if UNITY_EDITOR
             RequestEditorCatalogSync();
 #endif
-            ApplyInstanceCapacitySetting();
+            TrySetMaxInstanceCount(m_MaxInstanceCount);
             ApplyLoggerSettings();
             ApplyWriterSettings();
             RefreshCatalogCaches();
@@ -217,11 +217,6 @@ namespace Rendering.MatDataTransfer.Runtime
                 default:
                     return fallback;
             }
-        }
-
-        private void ApplyInstanceCapacitySetting()
-        {
-            m_MaxInstanceCount = ApplyInstanceCapacity(m_MaxInstanceCount);
         }
 
         private void RefreshCatalogCaches()

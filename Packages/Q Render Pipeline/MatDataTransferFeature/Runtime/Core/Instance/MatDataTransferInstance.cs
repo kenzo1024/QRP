@@ -127,12 +127,23 @@ namespace Rendering.MatDataTransfer.Runtime
         public IReadOnlyList<RendererMaterialBinding> Bindings => bindings;
 
         private static readonly List<MatDataTransferInstance> s_LiveInstances = new List<MatDataTransferInstance>();
+        internal static event System.Action<MatDataTransferInstance> LiveInstanceEnabled;
+        internal static event System.Action<MatDataTransferInstance> LiveInstanceDisabled;
+        internal static int TrackedLiveInstanceCount => LiveInstances.Count;
+        internal static IReadOnlyList<MatDataTransferInstance> LiveInstances
+        {
+            get
+            {
+                PruneLiveInstances();
+                return s_LiveInstances;
+            }
+        }
 
         private void OnEnable()
         {
-            TrackLiveInstance();
             EnsureSourceGuid(true);
             RefreshRendererBindings();
+            TrackLiveInstance();
             MatDataTransferRuntime.RequestEditorUpdate();
         }
 
@@ -141,6 +152,12 @@ namespace Rendering.MatDataTransfer.Runtime
             RemoveLiveInstance(this);
             SetRegisteredInstanceId(-1);
             MatDataTransferRuntime.RequestEditorUpdate();
+        }
+
+        private void OnDestroy()
+        {
+            RemoveLiveInstance(this);
+            SetRegisteredInstanceId(-1);
         }
 
         private void OnValidate()
@@ -253,7 +270,7 @@ namespace Rendering.MatDataTransfer.Runtime
             return result;
         }
 
-        internal void OnRegisteredByFeature()
+        internal void OnRegistered()
         {
             RefreshRendererBindings();
             MatDataTransferRuntime.RequestEditorUpdate();
@@ -284,6 +301,7 @@ namespace Rendering.MatDataTransfer.Runtime
                 return;
 
             s_LiveInstances.Add(instance);
+            LiveInstanceEnabled?.Invoke(instance);
         }
 
         private static void RemoveLiveInstance(MatDataTransferInstance instance)
@@ -291,7 +309,8 @@ namespace Rendering.MatDataTransfer.Runtime
             if (instance == null)
                 return;
 
-            s_LiveInstances.Remove(instance);
+            if (s_LiveInstances.Remove(instance))
+                LiveInstanceDisabled?.Invoke(instance);
         }
 
         private static void PruneLiveInstances()
@@ -300,7 +319,11 @@ namespace Rendering.MatDataTransfer.Runtime
             {
                 MatDataTransferInstance instance = s_LiveInstances[i];
                 if (instance == null || !instance.isActiveAndEnabled)
+                {
                     s_LiveInstances.RemoveAt(i);
+                    if (instance != null)
+                        LiveInstanceDisabled?.Invoke(instance);
+                }
             }
         }
 

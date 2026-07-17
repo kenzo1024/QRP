@@ -209,7 +209,7 @@ namespace Rendering.MatDataTransfer.Editor
             if (feature == null)
                 return;
 
-            feature.CopyInstanceRegisterEntries(m_InstanceEntries);
+            feature.GetRegisteredInstances(m_InstanceEntries);
 
             EditorGUILayout.Space(3f);
             s_ShowActiveInstances = InspectorStyleLibrary.DrawFoldoutLayout(

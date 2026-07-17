@@ -30,9 +30,7 @@ namespace Rendering.MatDataTransfer.Runtime
             if (!IsPrimaryInstance())
                 return;
 
-#if UNITY_INCLUDE_TESTS
-            RecordTestPipelineExecution();
-#endif
+            OnRequestPipelineExecuted();
 
             Logging.BeginFrame();
             try
@@ -49,8 +47,6 @@ namespace Rendering.MatDataTransfer.Runtime
                     return;
 
                 ApplyWriterSettings();
-                using (MatDataTransferProfiling.PassSyncInstances.Auto())
-                    SyncLiveInstances();
                 m_RequestContext.BeginFrame();
                 using (MatDataTransferProfiling.PipelineDrainProviders.Auto())
                     SubmitRequests(m_RequestContext);
@@ -63,7 +59,7 @@ namespace Rendering.MatDataTransfer.Runtime
                 {
                     commands = m_Resolver.Resolve(
                         Catalogs,
-                        MatDataTransferInstanceRegister,
+                        m_InstanceRegister,
                         m_FramePayloads);
                 }
 
@@ -84,7 +80,7 @@ namespace Rendering.MatDataTransfer.Runtime
                 return false;
             }
 
-            if (MatDataTransferInstanceRegister == null)
+            if (m_InstanceRegister == null)
             {
                 notReadyReason = "Request pipeline is not ready: instance id registry is missing.";
                 return false;
@@ -167,5 +163,6 @@ namespace Rendering.MatDataTransfer.Runtime
             MatDataTransferLogger.LogError(reason);
         }
 
+        partial void OnRequestPipelineExecuted();
     }
 }

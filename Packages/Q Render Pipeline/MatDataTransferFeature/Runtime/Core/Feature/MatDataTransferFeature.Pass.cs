@@ -22,8 +22,6 @@ namespace Rendering.MatDataTransfer.Runtime
             if (renderer == null || !IsPrimaryInstance())
                 return;
 
-            using (MatDataTransferProfiling.PassSyncInstances.Auto())
-                SyncLiveInstances();
             if (GetActiveInstanceCount() == 0 || m_Pass == null)
                 return;
 
