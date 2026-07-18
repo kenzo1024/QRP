@@ -23,10 +23,8 @@ namespace Rendering.MatDataTransfer.PerformanceTests
         public long SubmitValidateNanoseconds;
         public long PassSyncInstancesNanoseconds;
         public long PassPipelineNanoseconds;
-        public long PipelineDrainProvidersNanoseconds;
         public long PipelineResolveNanoseconds;
-        public long PipelineResolveTargetNanoseconds;
-        public long PipelineResolveConflictNanoseconds;
+        public long PipelineResolveGcAllocatedBytes;
         public long PipelineWriteNanoseconds;
         public long PipelineWriteResolveMaterialNanoseconds;
         public long PipelineWriteSetValueNanoseconds;

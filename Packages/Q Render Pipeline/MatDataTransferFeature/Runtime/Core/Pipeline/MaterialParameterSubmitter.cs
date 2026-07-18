@@ -167,8 +167,16 @@ namespace Rendering.MatDataTransfer.Runtime
             MatDataTransferFeature feature = MatDataTransferFeature.Instance;
 
             bool isValid;
+            RendererMaterialBinding binding;
+            ShaderPropertyCatalog catalog;
+            CatalogProperty property;
             using (MatDataTransferProfiling.SubmitValidate.Auto())
-                isValid = TryValidate(ref payload, feature);
+                isValid = TryValidate(
+                    ref payload,
+                    feature,
+                    out binding,
+                    out catalog,
+                    out property);
 
             if (!isValid)
             {
@@ -176,13 +184,14 @@ namespace Rendering.MatDataTransfer.Runtime
                 return payload.Trace;
             }
 
-            if (!feature.TrySubmitRequestToProvider(
-                MatDataTransferProviderNames.GenericMaterialParameter,
-                ref payload))
-            {
-                MatDataTransferLogging.CaptureSubmitSnapshot(ref payload);
-                return payload.Trace;
-            }
+            payload.Identity.Binding = new ParamRendererBinding(binding);
+            payload.Identity.SemanticKey = property.SuggestedSemanticKey;
+            ParamBindingResolution bindingResolution = ParamBindingResolution.FromCatalog(
+                property,
+                property.SuggestedSemanticKey,
+                binding.ShaderName,
+                catalog != null ? catalog.name : string.Empty);
+            feature.EnqueueValidatedRequest(ref payload, binding, bindingResolution);
 
             MatDataTransferRuntime.RequestEditorUpdate();
             return payload.Trace;
@@ -190,8 +199,15 @@ namespace Rendering.MatDataTransfer.Runtime
 
         private static bool TryValidate(
             ref ParamTransferPayload payload,
-            MatDataTransferFeature feature)
+            MatDataTransferFeature feature,
+            out RendererMaterialBinding resolvedBinding,
+            out ShaderPropertyCatalog resolvedCatalog,
+            out CatalogProperty resolvedProperty)
         {
+            resolvedBinding = null;
+            resolvedCatalog = null;
+            resolvedProperty = null;
+
             if (payload.Identity.Target == null)
                 return RejectSubmit(
                     ref payload,
@@ -235,20 +251,26 @@ namespace Rendering.MatDataTransfer.Runtime
                     ParamWriteResultCode.FeatureMissing,
                     "No active MatDataTransferFeature.");
 
-            if (!feature.HasRequestProvider(MatDataTransferProviderNames.GenericMaterialParameter))
+            if (!feature.CanAcceptRequests)
                 return RejectSubmit(
                     ref payload,
                     ParamWriteResultCode.ProviderUnavailable,
-                    "Generic material parameter provider is unavailable.");
+                    "Material parameter transfer pipeline is unavailable.");
 
-            RendererMaterialBinding bindingTarget = payload.Identity.Target.QueryBinding(payload.Identity.Binding);
-            if (bindingTarget == null)
+            resolvedBinding = payload.Identity.Target.QueryBinding(payload.Identity.Binding);
+            if (resolvedBinding == null)
                 return RejectSubmit(
                     ref payload,
                     ParamWriteResultCode.BindingMissing,
                     "No renderer/material binding matches the submit target.");
 
-            if (!TryFindCatalogProperty(bindingTarget, payload.Identity.SemanticKey, feature, out CatalogProperty property, out bool hasCatalog))
+            if (!TryFindCatalogProperty(
+                resolvedBinding,
+                payload.Identity.SemanticKey,
+                feature,
+                out resolvedCatalog,
+                out resolvedProperty,
+                out bool hasCatalog))
             {
                 ParamWriteResultCode code = hasCatalog
                     ? ParamWriteResultCode.PropertyMissing
@@ -259,7 +281,7 @@ namespace Rendering.MatDataTransfer.Runtime
                 return RejectSubmit(ref payload, code, message);
             }
 
-            ParamValueType expectedType = property.PropertyInfo.ValueType;
+            ParamValueType expectedType = resolvedProperty.PropertyInfo.ValueType;
             if (expectedType != payload.Identity.Value.Type)
                 return RejectSubmit(
                     ref payload,
@@ -350,6 +372,7 @@ namespace Rendering.MatDataTransfer.Runtime
                 semanticKey,
                 feature,
                 out _,
+                out _,
                 out _);
         }
 
@@ -357,19 +380,21 @@ namespace Rendering.MatDataTransfer.Runtime
             RendererMaterialBinding binding,
             string semanticKey,
             MatDataTransferFeature feature,
+            out ShaderPropertyCatalog catalog,
             out CatalogProperty property,
             out bool hasCatalog)
         {
+            catalog = null;
             property = null;
             hasCatalog = false;
 
             if (binding == null || string.IsNullOrEmpty(binding.ShaderName))
                 return false;
 
-            if (feature.TryGetCatalogForShader(binding.ShaderName, out _))
+            if (feature.TryGetCatalogForShader(binding.ShaderName, out catalog))
                 hasCatalog = true;
 
-            if (feature.TryGetProperty(binding.ShaderName, semanticKey, out _, out property))
+            if (feature.TryGetProperty(binding.ShaderName, semanticKey, out catalog, out property))
                 return property?.PropertyInfo != null;
 
             return false;

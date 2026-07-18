@@ -33,6 +33,7 @@ namespace Rendering.MatDataTransfer.Runtime
         public int TimelineVersion => m_TimelineVersion;
         public int MaxTimelineFrames => m_MaxTimelineFrames;
         public string CurrentLogFilePath => m_FileWriter.FilePath;
+        internal bool IsEnabled => m_EnableLogging;
 
         private MatDataTransferLogging()
         {
@@ -95,17 +96,18 @@ namespace Rendering.MatDataTransfer.Runtime
 
         internal static void CaptureWriteSnapshot(
             ref ParamTransferPayload payload,
-            ParamWriteCommand command,
+            ParamBindingResolution bindingResolution,
+            Renderer renderer,
             ParamWriteMethod writeMethod)
         {
             using (MatDataTransferProfiling.LoggingCapture.Auto())
             {
                 Instance.CaptureSubmitSnapshotInternal(
                     ref payload,
-                    command.BindingResolution,
+                    bindingResolution,
                     writeMethod,
-                    command.GameObjectPath,
-                    BuildRendererPath(command.Renderer));
+                    string.Empty,
+                    BuildRendererPath(renderer));
             }
         }
 
@@ -385,7 +387,7 @@ namespace Rendering.MatDataTransfer.Runtime
                 GameObjectPath = gameObjectPath ?? string.Empty,
                 RendererPath = rendererPath ?? string.Empty,
                 Identity = payload.Identity,
-                ProviderName = payload.ProviderName,
+                ProviderName = string.Empty,
                 Binding = binding,
                 WriteConfig = payload.WriteConfig,
                 WriteMethod = writeMethod,

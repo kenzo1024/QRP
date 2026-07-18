@@ -62,7 +62,12 @@ namespace Rendering.MatDataTransfer.Runtime
                 m_TestPipelineExecutionCount);
         }
 
-        partial void OnRequestPipelineExecuted()
+        internal ResolutionStats GetResolutionStats()
+        {
+            return m_ResolutionStats;
+        }
+
+        partial void OnTransferPipelineExecuted()
         {
             m_TestPipelineExecutionCount++;
         }

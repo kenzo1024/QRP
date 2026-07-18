@@ -13,10 +13,7 @@ namespace Rendering.MatDataTransfer.Runtime
         internal static readonly ProfilerMarker SubmitExpandScope = new ProfilerMarker("MDT.Submit.ExpandScope");
         internal static readonly ProfilerMarker PassSyncInstances = new ProfilerMarker("MDT.Pass.SyncInstances");
         internal static readonly ProfilerMarker PassPipeline = new ProfilerMarker("MDT.Pass.Pipeline");
-        internal static readonly ProfilerMarker PipelineDrainProviders = new ProfilerMarker("MDT.Pipeline.DrainProviders");
         internal static readonly ProfilerMarker PipelineResolve = new ProfilerMarker("MDT.Pipeline.Resolve");
-        internal static readonly ProfilerMarker PipelineResolveTarget = new ProfilerMarker("MDT.Pipeline.ResolveTarget");
-        internal static readonly ProfilerMarker PipelineResolveConflict = new ProfilerMarker("MDT.Pipeline.ResolveConflict");
         internal static readonly ProfilerMarker PipelineWrite = new ProfilerMarker("MDT.Pipeline.Write");
         internal static readonly ProfilerMarker PipelineWriteResolveMaterial = new ProfilerMarker("MDT.Pipeline.Write.ResolveMaterial");
         internal static readonly ProfilerMarker PipelineWriteSetValue = new ProfilerMarker("MDT.Pipeline.Write.SetValue");
@@ -29,8 +26,6 @@ namespace Rendering.MatDataTransfer.Runtime
             ProfilerCounterOptions.FlushOnEndOfFrame | ProfilerCounterOptions.ResetToZeroOnFlush;
 
         private static readonly IntCounter s_PayloadCount = new IntCounter("MDT Payload Count");
-        private static readonly IntCounter s_GroupCount = new IntCounter("MDT Group Count");
-        private static readonly IntCounter s_CommandCount = new IntCounter("MDT Command Count");
         private static readonly IntCounter s_TraceCount = new IntCounter("MDT Trace Count");
         private static readonly IntCounter s_StepCount = new IntCounter("MDT Step Count");
         private static readonly IntCounter s_TimelineRecordCount = new IntCounter("MDT Timeline Record Count");
@@ -38,10 +33,6 @@ namespace Rendering.MatDataTransfer.Runtime
 
         [System.Diagnostics.Conditional("ENABLE_PROFILER")]
         internal static void AddPayload() => s_PayloadCount.Increment();
-        [System.Diagnostics.Conditional("ENABLE_PROFILER")]
-        internal static void AddGroup() => s_GroupCount.Increment();
-        [System.Diagnostics.Conditional("ENABLE_PROFILER")]
-        internal static void AddCommand() => s_CommandCount.Increment();
         [System.Diagnostics.Conditional("ENABLE_PROFILER")]
         internal static void AddTrace() => s_TraceCount.Increment();
         [System.Diagnostics.Conditional("ENABLE_PROFILER")]
@@ -78,10 +69,6 @@ namespace Rendering.MatDataTransfer.Runtime
 #else
         [System.Diagnostics.Conditional("ENABLE_PROFILER")]
         internal static void AddPayload() { }
-        [System.Diagnostics.Conditional("ENABLE_PROFILER")]
-        internal static void AddGroup() { }
-        [System.Diagnostics.Conditional("ENABLE_PROFILER")]
-        internal static void AddCommand() { }
         [System.Diagnostics.Conditional("ENABLE_PROFILER")]
         internal static void AddTrace() { }
         [System.Diagnostics.Conditional("ENABLE_PROFILER")]

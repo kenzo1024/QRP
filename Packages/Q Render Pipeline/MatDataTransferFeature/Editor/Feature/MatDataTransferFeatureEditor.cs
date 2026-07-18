@@ -10,7 +10,6 @@ namespace Rendering.MatDataTransfer.Editor
     public sealed class MatDataTransferFeatureEditor : UnityEditor.Editor
     {
         private const string CatalogsPropertyName = "m_Catalogs";
-        private const string GenericProviderSettingsPropertyName = "m_GenericProviderSettings";
         private const string LoggingSettingsPropertyName = "m_LoggingSettings";
         private const string EditModeWriteModePropertyName = "m_EditModeWriteMode";
         private const string RuntimeWriteModePropertyName = "m_RuntimeWriteMode";
@@ -38,11 +37,9 @@ namespace Rendering.MatDataTransfer.Editor
         private static bool s_ShowInstances = true;
         private static bool s_ShowActiveInstances;
         private static bool s_ShowMaterialWriting = true;
-        private static bool s_ShowRequestProviders = true;
         private static bool s_ShowLogging = true;
 
         private SerializedProperty m_Catalogs;
-        private SerializedProperty m_GenericProviderSettings;
         private SerializedProperty m_LoggingSettings;
         private SerializedProperty m_EditModeWriteMode;
         private SerializedProperty m_RuntimeWriteMode;
@@ -55,7 +52,6 @@ namespace Rendering.MatDataTransfer.Editor
         {
             EnsureFixedFeatureName();
             m_Catalogs = serializedObject.FindProperty(CatalogsPropertyName);
-            m_GenericProviderSettings = serializedObject.FindProperty(GenericProviderSettingsPropertyName);
             m_LoggingSettings = serializedObject.FindProperty(LoggingSettingsPropertyName);
             m_EditModeWriteMode = serializedObject.FindProperty(EditModeWriteModePropertyName);
             m_RuntimeWriteMode = serializedObject.FindProperty(RuntimeWriteModePropertyName);
@@ -74,7 +70,6 @@ namespace Rendering.MatDataTransfer.Editor
             EditorGUILayout.Space(6f);
             DrawMaterialWriting();
             EditorGUILayout.Space(6f);
-            DrawRequestProviders();
             EditorGUILayout.Space(6f);
             DrawLoggingSettings();
 
@@ -361,35 +356,6 @@ namespace Rendering.MatDataTransfer.Editor
             }
 
             return -1;
-        }
-
-        private void DrawRequestProviders()
-        {
-            s_ShowRequestProviders = InspectorStyleLibrary.DrawFoldoutLayout(
-                s_ShowRequestProviders,
-                "Request Providers",
-                false);
-            if (!s_ShowRequestProviders)
-                return;
-
-            using (InspectorStyleLibrary.BeginPanelLayout())
-                DrawGenericProvider();
-        }
-
-        private void DrawGenericProvider()
-        {
-            if (m_GenericProviderSettings == null)
-                return;
-
-            InspectorStyleLibrary.DrawTitle(MatDataTransferProviderNames.GenericMaterialParameter);
-            InspectorStyleLibrary.DrawCopyableTailLabelLayout(
-                "Type: Built-in Generic Material Parameter Provider",
-                InspectorStyleLibrary.Description,
-                false);
-            InspectorStyleLibrary.DrawDescription("Kind: Built-in Request Provider");
-            EditorGUILayout.PropertyField(m_GenericProviderSettings.FindPropertyRelative("Enabled"));
-            using (new EditorGUI.DisabledScope(true))
-                GUILayout.Button("Built-in", EditorStyles.miniButton, GUILayout.Width(72f));
         }
 
         private void DrawLoggingSettings()

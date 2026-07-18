@@ -9,21 +9,19 @@ namespace Rendering.MatDataTransfer.PerformanceTests
     [TestFixture]
     internal sealed class MatDataTransferPerformanceTests
     {
-        private readonly List<ShaderPropertyCatalog> m_Catalogs = new List<ShaderPropertyCatalog>();
-        private readonly List<ParamTransferPayload> m_Payloads = new List<ParamTransferPayload>();
+        private readonly List<ValidatedParamRequest> m_Requests = new List<ValidatedParamRequest>();
 
         private GameObject m_Root;
         private Material m_Material;
         private ShaderPropertyCatalog m_Catalog;
-        private MatDataTransferInstanceRegister m_Registry;
         private MaterialParameterResolver m_Resolver;
         private MaterialParameterWriter m_Writer;
+        private ResolutionStats m_ResolutionStats;
 
         [SetUp]
         public void SetUp()
         {
-            m_Catalogs.Clear();
-            m_Payloads.Clear();
+            m_Requests.Clear();
             MatDataTransferLogging.Instance.ApplySettings(new MatDataTransferLoggingSettings());
             CreateFixedFixture();
         }
@@ -41,8 +39,7 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             if (m_Root != null)
                 Object.DestroyImmediate(m_Root);
 
-            m_Catalogs.Clear();
-            m_Payloads.Clear();
+            m_Requests.Clear();
         }
 
         [Test, Performance]
@@ -50,7 +47,7 @@ namespace Rendering.MatDataTransfer.PerformanceTests
         {
             IReadOnlyList<ParamWriteCommand> commands = new List<ParamWriteCommand>();
 
-            Measure.Method(() => m_Writer.Apply(commands))
+            Measure.Method(() => m_Writer.Apply(commands, null))
                 .WarmupCount(10)
                 .MeasurementCount(100)
                 .GC()
@@ -65,7 +62,7 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             FillPayloads(requestCount);
             ResolveSingleWinningCommand();
 
-            Measure.Method(() => m_Resolver.Resolve(m_Catalogs, m_Registry, m_Payloads))
+            Measure.Method(ResolveRequests)
                 .WarmupCount(10)
                 .MeasurementCount(100)
                 .GC()
@@ -78,7 +75,7 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             FillPayloads(1);
             IReadOnlyList<ParamWriteCommand> commands = ResolveSingleWinningCommand();
 
-            Measure.Method(() => m_Writer.Apply(commands))
+            Measure.Method(() => m_Writer.Apply(commands, null))
                 .WarmupCount(10)
                 .MeasurementCount(100)
                 .GC()
@@ -110,20 +107,15 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             });
             Assert.That(m_Catalog.Properties, Has.Count.EqualTo(1));
             m_Catalog.Properties[0].Status = CatalogPropertyStatus.Ok;
-            m_Catalogs.Add(m_Catalog);
-
-            m_Registry = new MatDataTransferInstanceRegister(1);
-            Assert.That(m_Registry.TryRegister(instance, out _), Is.True);
             m_Resolver = new MaterialParameterResolver();
             m_Writer = new MaterialParameterWriter();
         }
 
         private IReadOnlyList<ParamWriteCommand> ResolveSingleWinningCommand()
         {
-            IReadOnlyList<ParamWriteCommand> commands = m_Resolver.Resolve(
-                m_Catalogs,
-                m_Registry,
-                m_Payloads);
+            IReadOnlyList<ParamWriteCommand> commands = m_Resolver.ResolveWithoutDiagnostics(
+                m_Requests,
+                ref m_ResolutionStats);
             Assert.That(
                 commands,
                 Has.Count.EqualTo(1),
@@ -131,35 +123,40 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             return commands;
         }
 
+        private void ResolveRequests()
+        {
+            m_Resolver.ResolveWithoutDiagnostics(
+                m_Requests,
+                ref m_ResolutionStats);
+        }
+
         private void FillPayloads(int count)
         {
-            m_Payloads.Clear();
+            m_Requests.Clear();
             MatDataTransferInstance instance = m_Root.GetComponent<MatDataTransferInstance>();
             Renderer renderer = m_Root.GetComponent<Renderer>();
             RendererMaterialBinding binding = instance.QueryBinding(renderer, 0);
             Assert.That(binding, Is.Not.Null);
 
-            string semanticKey = m_Catalog.Properties[0].SuggestedSemanticKey;
-            MatDataTransferSubmitSource source = new MatDataTransferSubmitSource
-            {
-                Id = "MDTS.Performance",
-                Owner = null
-            };
+            int instanceId = instance.GetInstanceID();
+            int rendererId = renderer.GetInstanceID();
+            int propertyId = Shader.PropertyToID(m_Catalog.Properties[0].PropertyInfo.PropertyName);
+            ConflictKey conflictKey = new ConflictKey(instanceId, rendererId, 0, propertyId);
+            ParamWriteTarget writeTarget = new ParamWriteTarget(renderer, 0, propertyId);
 
             for (int i = 0; i < count; i++)
             {
-                ParamRequestIdentity identity = new ParamRequestIdentity(
-                    instance,
-                    source,
-                    semanticKey,
+                m_Requests.Add(new ValidatedParamRequest(
+                    instanceId,
+                    conflictKey,
+                    writeTarget,
                     ParamValue.Color(Color.white),
-                    binding);
-                ParamTransferPayload payload = new ParamTransferPayload(
-                    identity,
-                    new ParamWriteConfig(ParamWriteLayer.Gameplay, i));
-                payload.Sequence = i;
-                payload.SubmitFrameIndex = 1;
-                m_Payloads.Add(payload);
+                    new RequestStrength(
+                        ParamWriteLayers.GetStrength(ParamWriteLayer.Gameplay),
+                        i,
+                        1,
+                        i),
+                    i));
             }
         }
     }

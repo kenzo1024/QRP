@@ -28,12 +28,281 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             MatDataTransferBatchFrameStats[] samples,
             int sampleCount)
         {
+            if (IsResolverGcReport())
+                return WriteResolverGcReport(scenario, samples, sampleCount);
+
+            if (IsResolverOnlyReport())
+                return WriteResolverReport(scenario, samples, sampleCount);
+
             string summaryPath = Path.Combine(
                 m_OutputRoot,
                 "MatDataTransfer_BatchMode_" + m_RunStamp + "_Summary.csv");
 
             AppendSummary(summaryPath, scenario, samples, sampleCount);
             return summaryPath;
+        }
+
+        private string WriteResolverGcReport(
+            MatDataTransferBatchScenario scenario,
+            MatDataTransferBatchFrameStats[] samples,
+            int sampleCount)
+        {
+            MatDataTransferBatchFrameStats[] submissionSamples = SelectPhase(
+                samples,
+                sampleCount,
+                MatDataTransferBatchPhase.Submission);
+            if (submissionSamples.Length == 0)
+                return string.Empty;
+
+            string rawPath = Path.Combine(
+                m_OutputRoot,
+                "MatDataTransfer_ResolverGc_" + m_RunStamp + "_Raw.csv");
+            string summaryPath = Path.Combine(
+                m_OutputRoot,
+                "MatDataTransfer_ResolverGc_" + m_RunStamp + "_Summary.csv");
+
+            AppendResolverGcRaw(rawPath, scenario, submissionSamples);
+            AppendResolverGcSummary(summaryPath, scenario, submissionSamples);
+            return summaryPath;
+        }
+
+        private static bool IsResolverGcReport()
+        {
+            string[] args = Environment.GetCommandLineArgs();
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (string.Equals(args[i], "-mdtResolverGc", StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static void AppendResolverGcRaw(
+            string path,
+            MatDataTransferBatchScenario scenario,
+            MatDataTransferBatchFrameStats[] samples)
+        {
+            bool writeHeader = !File.Exists(path);
+            using (StreamWriter writer = new StreamWriter(path, true, new UTF8Encoding(false)))
+            {
+                if (writeHeader)
+                {
+                    writer.WriteLine(
+                        "ScenarioId,SourceScenarioId,FrameIndex,Input,Group,Winner,Overridden,ResolverGcAllocatedBytes");
+                }
+
+                string resolverScenarioId = GetResolverScenarioId(scenario.Id);
+                for (int i = 0; i < samples.Length; i++)
+                {
+                    MatDataTransferBatchFrameStats sample = samples[i];
+                    writer.Write(resolverScenarioId);
+                    writer.Write(',');
+                    writer.Write(scenario.Id);
+                    writer.Write(',');
+                    writer.Write(sample.FrameIndex);
+                    writer.Write(',');
+                    writer.Write(sample.PayloadCount);
+                    writer.Write(',');
+                    writer.Write(sample.GroupCount);
+                    writer.Write(',');
+                    writer.Write(sample.CommandCount);
+                    writer.Write(',');
+                    writer.Write(sample.OverriddenCount);
+                    writer.Write(',');
+                    writer.Write(sample.PipelineResolveGcAllocatedBytes);
+                    writer.WriteLine();
+                }
+            }
+        }
+
+        private static void AppendResolverGcSummary(
+            string path,
+            MatDataTransferBatchScenario scenario,
+            MatDataTransferBatchFrameStats[] samples)
+        {
+            bool writeHeader = !File.Exists(path);
+            Summary resolveGc = Summarize(samples, samples.Length, ValueKind.ResolveGcBytes);
+            double bytesPerInput = scenario.ExpectedPayloadCount > 0
+                ? resolveGc.Median / scenario.ExpectedPayloadCount
+                : 0.0;
+
+            using (StreamWriter writer = new StreamWriter(path, true, new UTF8Encoding(false)))
+            {
+                if (writeHeader)
+                {
+                    writer.WriteLine(
+                        "ScenarioId,SourceScenarioId,Input,Group,Winner,Overridden,SampleCount,ResolverGcMedian,ResolverGcP95,ResolverGcMax,BytesPerInput");
+                }
+
+                writer.Write(GetResolverScenarioId(scenario.Id));
+                writer.Write(',');
+                writer.Write(scenario.Id);
+                writer.Write(',');
+                writer.Write(scenario.ExpectedPayloadCount);
+                writer.Write(',');
+                writer.Write(scenario.ExpectedGroupCount);
+                writer.Write(',');
+                writer.Write(scenario.ExpectedCommandCount);
+                writer.Write(',');
+                writer.Write(scenario.ExpectedOverriddenCount);
+                writer.Write(',');
+                writer.Write(samples.Length);
+                writer.Write(',');
+                WriteDouble(writer, resolveGc.Median);
+                writer.Write(',');
+                WriteDouble(writer, resolveGc.P95);
+                writer.Write(',');
+                WriteDouble(writer, resolveGc.Max);
+                writer.Write(',');
+                WriteDouble(writer, bytesPerInput);
+                writer.WriteLine();
+            }
+        }
+
+        private string WriteResolverReport(
+            MatDataTransferBatchScenario scenario,
+            MatDataTransferBatchFrameStats[] samples,
+            int sampleCount)
+        {
+            MatDataTransferBatchFrameStats[] submissionSamples = SelectPhase(
+                samples,
+                sampleCount,
+                MatDataTransferBatchPhase.Submission);
+            if (submissionSamples.Length == 0)
+                return string.Empty;
+
+            string rawPath = Path.Combine(
+                m_OutputRoot,
+                "MatDataTransfer_Resolver_" + m_RunStamp + "_Raw.csv");
+            string summaryPath = Path.Combine(
+                m_OutputRoot,
+                "MatDataTransfer_Resolver_" + m_RunStamp + "_Summary.csv");
+
+            AppendResolverRaw(rawPath, scenario, submissionSamples);
+            AppendResolverSummary(summaryPath, scenario, submissionSamples);
+            return summaryPath;
+        }
+
+        private static bool IsResolverOnlyReport()
+        {
+            string[] args = Environment.GetCommandLineArgs();
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (string.Equals(args[i], "-mdtResolverOnly", StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static void AppendResolverRaw(
+            string path,
+            MatDataTransferBatchScenario scenario,
+            MatDataTransferBatchFrameStats[] samples)
+        {
+            bool writeHeader = !File.Exists(path);
+            using (StreamWriter writer = new StreamWriter(path, true, new UTF8Encoding(false)))
+            {
+                if (writeHeader)
+                {
+                    writer.WriteLine(
+                        "ScenarioId,SourceScenarioId,FrameIndex,Input,Group,Winner,Overridden,ResolverElapsedNs");
+                }
+
+                string resolverScenarioId = GetResolverScenarioId(scenario.Id);
+                for (int i = 0; i < samples.Length; i++)
+                {
+                    MatDataTransferBatchFrameStats sample = samples[i];
+                    writer.Write(resolverScenarioId);
+                    writer.Write(',');
+                    writer.Write(scenario.Id);
+                    writer.Write(',');
+                    writer.Write(sample.FrameIndex);
+                    writer.Write(',');
+                    writer.Write(sample.PayloadCount);
+                    writer.Write(',');
+                    writer.Write(sample.GroupCount);
+                    writer.Write(',');
+                    writer.Write(sample.CommandCount);
+                    writer.Write(',');
+                    writer.Write(sample.OverriddenCount);
+                    writer.Write(',');
+                    writer.Write(sample.PipelineResolveNanoseconds);
+                    writer.WriteLine();
+                }
+            }
+        }
+
+        private static void AppendResolverSummary(
+            string path,
+            MatDataTransferBatchScenario scenario,
+            MatDataTransferBatchFrameStats[] samples)
+        {
+            bool writeHeader = !File.Exists(path);
+            Summary resolve = Summarize(samples, samples.Length, ValueKind.ResolveNs);
+            double nanosecondsPerInput = scenario.ExpectedPayloadCount > 0
+                ? resolve.Median / scenario.ExpectedPayloadCount
+                : 0.0;
+
+            using (StreamWriter writer = new StreamWriter(path, true, new UTF8Encoding(false)))
+            {
+                if (writeHeader)
+                {
+                    writer.WriteLine(
+                        "ScenarioId,SourceScenarioId,ObjectCount,PropertyCount,SourceCount,Input,Group,Winner,Overridden,SampleCount,ResolverMedianMs,ResolverP95Ms,ResolverMaxMs,NsPerInput");
+                }
+
+                writer.Write(GetResolverScenarioId(scenario.Id));
+                writer.Write(',');
+                writer.Write(scenario.Id);
+                writer.Write(',');
+                writer.Write(scenario.ObjectCount);
+                writer.Write(',');
+                writer.Write(scenario.PropertyCount);
+                writer.Write(',');
+                writer.Write(scenario.SourceCount);
+                writer.Write(',');
+                writer.Write(scenario.ExpectedPayloadCount);
+                writer.Write(',');
+                writer.Write(scenario.ExpectedGroupCount);
+                writer.Write(',');
+                writer.Write(scenario.ExpectedCommandCount);
+                writer.Write(',');
+                writer.Write(scenario.ExpectedOverriddenCount);
+                writer.Write(',');
+                writer.Write(samples.Length);
+                writer.Write(',');
+                WriteDouble(writer, resolve.Median / 1000000.0);
+                writer.Write(',');
+                WriteDouble(writer, resolve.P95 / 1000000.0);
+                writer.Write(',');
+                WriteDouble(writer, resolve.Max / 1000000.0);
+                writer.Write(',');
+                WriteDouble(writer, nanosecondsPerInput);
+                writer.WriteLine();
+            }
+        }
+
+        private static string GetResolverScenarioId(string scenarioId)
+        {
+            switch (scenarioId)
+            {
+                case "B01":
+                    return "R01";
+                case "B02":
+                    return "R02";
+                case "B03":
+                    return "R03";
+                case "B04":
+                    return "R04";
+                case "B06":
+                    return "R05";
+                case "B05":
+                    return "R06";
+                default:
+                    return scenarioId;
+            }
         }
 
         public static string ResolveOutputRootFromCommandLine()
@@ -72,7 +341,7 @@ namespace Rendering.MatDataTransfer.PerformanceTests
         {
             StringBuilder builder = new StringBuilder(4096 + sampleCount * 512);
             builder.AppendLine(
-                "ScenarioId,Phase,PipelineMode,FrameIndex,FrameMs,GcAllocatedBytes,ManagedHeapBytes,ActiveInstance,LiveInstance,Payload,Group,Command,Applied,Overridden,Rejected,WriterFailed,Trace,TimelineRecord,MaterialArrayRead,SyncCallCount,SyncElapsedNs,SyncGcAllocatedBytes,PipelineExecutionCount,SubmitTotalNs,SubmitValidateNs,PassSyncInstancesNs,PassPipelineNs,PipelineDrainProvidersNs,PipelineResolveNs,PipelineResolveTargetNs,PipelineResolveConflictNs,PipelineWriteNs,PipelineWriteResolveMaterialNs,PipelineWriteSetValueNs,LoggingCaptureNs,LoggingCommitTimelineNs");
+                "ScenarioId,Phase,PipelineMode,FrameIndex,FrameMs,GcAllocatedBytes,ManagedHeapBytes,ActiveInstance,LiveInstance,Payload,Group,Command,Applied,Overridden,Rejected,WriterFailed,Trace,TimelineRecord,MaterialArrayRead,SyncCallCount,SyncElapsedNs,SyncGcAllocatedBytes,PipelineExecutionCount,SubmitTotalNs,SubmitValidateNs,PassSyncInstancesNs,PassPipelineNs,PipelineResolveNs,PipelineWriteNs,PipelineWriteResolveMaterialNs,PipelineWriteSetValueNs,LoggingCaptureNs,LoggingCommitTimelineNs");
 
             for (int i = 0; i < sampleCount; i++)
             {
@@ -104,10 +373,7 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                 builder.Append(sample.SubmitValidateNanoseconds).Append(',');
                 builder.Append(sample.PassSyncInstancesNanoseconds).Append(',');
                 builder.Append(sample.PassPipelineNanoseconds).Append(',');
-                builder.Append(sample.PipelineDrainProvidersNanoseconds).Append(',');
                 builder.Append(sample.PipelineResolveNanoseconds).Append(',');
-                builder.Append(sample.PipelineResolveTargetNanoseconds).Append(',');
-                builder.Append(sample.PipelineResolveConflictNanoseconds).Append(',');
                 builder.Append(sample.PipelineWriteNanoseconds).Append(',');
                 builder.Append(sample.PipelineWriteResolveMaterialNanoseconds).Append(',');
                 builder.Append(sample.PipelineWriteSetValueNanoseconds).Append(',');
@@ -365,6 +631,8 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                     return sample.SubmitTotalNanoseconds;
                 case ValueKind.ResolveNs:
                     return sample.PipelineResolveNanoseconds;
+                case ValueKind.ResolveGcBytes:
+                    return sample.PipelineResolveGcAllocatedBytes;
                 case ValueKind.WriteNs:
                     return sample.PipelineWriteNanoseconds;
                 case ValueKind.Applied:
@@ -450,6 +718,7 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             GcBytes,
             SubmitNs,
             ResolveNs,
+            ResolveGcBytes,
             WriteNs,
             Applied,
             Overridden,

@@ -12,6 +12,8 @@ using UnityEngine.Rendering.Universal;
 using UnityEngine.TestTools;
 #if UNITY_EDITOR
 using UnityEditor;
+using UnityEditor.Profiling;
+using UnityEditorInternal;
 #endif
 
 namespace Rendering.MatDataTransfer.PerformanceTests
@@ -36,6 +38,12 @@ namespace Rendering.MatDataTransfer.PerformanceTests
         private MethodInfo m_ExecutePipelineMethod;
         private RenderPipelineAsset m_OriginalRenderPipelineAsset;
         private bool m_RenderPipelineWasConfigured;
+#if UNITY_EDITOR
+        private bool m_ResolverGcProfilingEnabled;
+        private bool m_ProfilerWasEnabled;
+        private bool m_ProfilerDriverWasEnabled;
+        private int m_LastResolverGcProfilerFrame = -1;
+#endif
 
         private sealed class MeasurementState
         {
@@ -61,6 +69,7 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                 UnityEngine.Object.Destroy(m_RenderTarget);
 
             RestoreRenderPipeline();
+            RestoreResolverGcProfiling();
         }
 
         [UnityTest, Performance]
@@ -131,6 +140,7 @@ namespace Rendering.MatDataTransfer.PerformanceTests
 
         private IEnumerator RunScenario(MatDataTransferBatchScenario scenario)
         {
+            ConfigureResolverGcProfiling();
             yield return EnsureFeatureReady();
             ConfigureFeature(scenario);
             PrepareDriver(scenario);
@@ -206,6 +216,9 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                 RequestCameraRender();
                 yield return null;
                 long manualPipelineNanoseconds = ExecuteManualPipelineIfNeeded();
+                long resolverGcAllocatedBytes = phase == MatDataTransferBatchPhase.Submission
+                    ? ReadResolverGcAllocatedBytes()
+                    : 0L;
                 MatDataTransferInstanceSyncStats syncStats =
                     MatDataTransferFeature.Instance.GetInstanceSyncStats();
 
@@ -217,7 +230,8 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                     state.LogicalFrame,
                     (Time.realtimeSinceStartupAsDouble - start) * 1000.0,
                     manualPipelineNanoseconds,
-                    syncStats);
+                    syncStats,
+                    resolverGcAllocatedBytes);
                 AssertFrameStats(scenario, phase, stats);
                 state.Samples.Add(stats);
 
@@ -404,7 +418,7 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                 if (useManualPipeline)
                 {
                     m_ExecutePipelineMethod = typeof(MatDataTransferFeature).GetMethod(
-                        "ExecuteRequestPipeline",
+                        "ExecuteTransferPipeline",
                         BindingFlags.Instance | BindingFlags.NonPublic);
                 }
 
@@ -447,9 +461,11 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             int logicalFrame,
             double frameMilliseconds,
             long manualPipelineNanoseconds,
-            MatDataTransferInstanceSyncStats syncStats)
+            MatDataTransferInstanceSyncStats syncStats,
+            long resolverGcAllocatedBytes)
         {
             IReadOnlyList<ParamWriteResult> receipts = MatDataTransferLogging.Instance.LastReceipts;
+            ResolutionStats resolutionStats = MatDataTransferFeature.Instance.GetResolutionStats();
             MatDataTransferBatchFrameStats stats = new MatDataTransferBatchFrameStats
             {
                 Phase = phase,
@@ -459,11 +475,10 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                 GcAllocatedBytes = recorders.GcAllocatedBytes,
                 ManagedHeapBytes = recorders.ManagedHeapBytes,
                 ActiveInstanceCount = syncStats.RegisteredInstanceCount,
-                PayloadCount = receipts.Count,
-                GroupCount = phase == MatDataTransferBatchPhase.Submission
-                    ? scenario.ExpectedGroupCount
-                    : 0,
-                CommandCount = 0,
+                PayloadCount = resolutionStats.InputCount,
+                GroupCount = resolutionStats.WinnerCount,
+                CommandCount = resolutionStats.WinnerCount,
+                OverriddenCount = resolutionStats.OverriddenCount,
                 TraceCount = scenario.EnableLogging ? MatDataTransferLogging.Instance.TimelineRecords.Count : 0,
                 TimelineRecordCount = scenario.EnableLogging ? MatDataTransferLogging.Instance.TimelineRecords.Count : 0,
                 SubmitTotalNanoseconds = recorders.SubmitTotalNanoseconds,
@@ -472,10 +487,8 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                 PassPipelineNanoseconds = recorders.PassPipelineNanoseconds != 0
                     ? recorders.PassPipelineNanoseconds
                     : manualPipelineNanoseconds,
-                PipelineDrainProvidersNanoseconds = recorders.PipelineDrainProvidersNanoseconds,
                 PipelineResolveNanoseconds = recorders.PipelineResolveNanoseconds,
-                PipelineResolveTargetNanoseconds = recorders.PipelineResolveTargetNanoseconds,
-                PipelineResolveConflictNanoseconds = recorders.PipelineResolveConflictNanoseconds,
+                PipelineResolveGcAllocatedBytes = resolverGcAllocatedBytes,
                 PipelineWriteNanoseconds = recorders.PipelineWriteNanoseconds,
                 PipelineWriteResolveMaterialNanoseconds = recorders.PipelineWriteResolveMaterialNanoseconds,
                 PipelineWriteSetValueNanoseconds = recorders.PipelineWriteSetValueNanoseconds,
@@ -494,10 +507,6 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                 {
                     case ParamWriteStatus.Applied:
                         stats.AppliedCount++;
-                        stats.CommandCount++;
-                        break;
-                    case ParamWriteStatus.Overridden:
-                        stats.OverriddenCount++;
                         break;
                     case ParamWriteStatus.Rejected:
                         stats.RejectedCount++;
@@ -510,6 +519,116 @@ namespace Rendering.MatDataTransfer.PerformanceTests
 
             return stats;
         }
+
+        private static bool HasCommandLineFlag(string flag)
+        {
+            string[] args = Environment.GetCommandLineArgs();
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (string.Equals(args[i], flag, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private void ConfigureResolverGcProfiling()
+        {
+#if UNITY_EDITOR
+            if (m_ResolverGcProfilingEnabled || !HasCommandLineFlag("-mdtResolverGc"))
+                return;
+
+            m_ResolverGcProfilingEnabled = true;
+            m_ProfilerWasEnabled = UnityEngine.Profiling.Profiler.enabled;
+            m_ProfilerDriverWasEnabled = ProfilerDriver.enabled;
+            ProfilerDriver.enabled = true;
+            UnityEngine.Profiling.Profiler.enabled = true;
+            m_LastResolverGcProfilerFrame = ProfilerDriver.lastFrameIndex;
+#endif
+        }
+
+        private void RestoreResolverGcProfiling()
+        {
+#if UNITY_EDITOR
+            if (!m_ResolverGcProfilingEnabled)
+                return;
+
+            UnityEngine.Profiling.Profiler.enabled = m_ProfilerWasEnabled;
+            ProfilerDriver.enabled = m_ProfilerDriverWasEnabled;
+            m_ResolverGcProfilingEnabled = false;
+            m_LastResolverGcProfilerFrame = -1;
+#endif
+        }
+
+        private long ReadResolverGcAllocatedBytes()
+        {
+#if UNITY_EDITOR
+            if (!m_ResolverGcProfilingEnabled)
+                return 0L;
+
+            int lastFrameIndex = ProfilerDriver.lastFrameIndex;
+            int firstFrameIndex = Math.Max(ProfilerDriver.firstFrameIndex, m_LastResolverGcProfilerFrame + 1);
+            for (int frameIndex = lastFrameIndex; frameIndex >= firstFrameIndex; frameIndex--)
+            {
+                if (!TryReadResolverGcAllocatedBytes(frameIndex, out long allocatedBytes))
+                    continue;
+
+                m_LastResolverGcProfilerFrame = frameIndex;
+                return allocatedBytes;
+            }
+#endif
+            return -1L;
+        }
+
+#if UNITY_EDITOR
+        private static bool TryReadResolverGcAllocatedBytes(int frameIndex, out long allocatedBytes)
+        {
+            allocatedBytes = 0L;
+            using (HierarchyFrameDataView frameData = ProfilerDriver.GetHierarchyFrameDataView(
+                frameIndex,
+                0,
+                HierarchyFrameDataView.ViewModes.MergeSamplesWithTheSameName,
+                HierarchyFrameDataView.columnDontSort,
+                false))
+            {
+                if (!frameData.valid)
+                    return false;
+
+                int markerId = frameData.GetMarkerId("MDT.Pipeline.Resolve");
+                if (markerId == FrameDataView.invalidMarkerId)
+                    return false;
+
+                int itemId = FindHierarchyItem(frameData, frameData.GetRootItemID(), markerId);
+                if (itemId == HierarchyFrameDataView.invalidSampleId)
+                    return false;
+
+                allocatedBytes = (long)frameData.GetItemColumnDataAsDouble(
+                    itemId,
+                    HierarchyFrameDataView.columnGcMemory);
+                return true;
+            }
+        }
+
+        private static int FindHierarchyItem(
+            HierarchyFrameDataView frameData,
+            int itemId,
+            int markerId)
+        {
+            if (frameData.GetItemMarkerID(itemId) == markerId)
+                return itemId;
+
+            List<int> children = new List<int>();
+            frameData.GetItemChildren(itemId, children);
+            for (int i = 0; i < children.Count; i++)
+            {
+                int found = FindHierarchyItem(frameData, children[i], markerId);
+                if (found != HierarchyFrameDataView.invalidSampleId)
+                    return found;
+            }
+
+            return HierarchyFrameDataView.invalidSampleId;
+        }
+#endif
 
         private static void AssertFrameStats(
             MatDataTransferBatchScenario scenario,
@@ -535,7 +654,7 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             {
                 Assert.That(stats.SyncCallCount, Is.EqualTo(0), scenario.TestName + " unexpectedly executed instance maintenance.");
                 Assert.That(stats.SyncGcAllocatedBytes, Is.EqualTo(0), scenario.TestName + " allocated GC memory during instance maintenance.");
-                Assert.That(stats.PipelineExecutionCount, Is.GreaterThan(0), scenario.TestName + " did not execute the request pipeline.");
+                Assert.That(stats.PipelineExecutionCount, Is.GreaterThan(0), scenario.TestName + " did not execute the transfer pipeline.");
             }
         }
 
@@ -558,10 +677,7 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             private readonly ProfilerRecorder m_SubmitValidate;
             private readonly ProfilerRecorder m_PassSyncInstances;
             private readonly ProfilerRecorder m_PassPipeline;
-            private readonly ProfilerRecorder m_PipelineDrainProviders;
             private readonly ProfilerRecorder m_PipelineResolve;
-            private readonly ProfilerRecorder m_PipelineResolveTarget;
-            private readonly ProfilerRecorder m_PipelineResolveConflict;
             private readonly ProfilerRecorder m_PipelineWrite;
             private readonly ProfilerRecorder m_PipelineWriteResolveMaterial;
             private readonly ProfilerRecorder m_PipelineWriteSetValue;
@@ -576,10 +692,7 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                 m_SubmitValidate = Start(ProfilerCategory.Scripts, "MDT.Submit.Validate");
                 m_PassSyncInstances = Start(ProfilerCategory.Scripts, "MDT.Pass.SyncInstances");
                 m_PassPipeline = Start(ProfilerCategory.Scripts, "MDT.Pass.Pipeline");
-                m_PipelineDrainProviders = Start(ProfilerCategory.Scripts, "MDT.Pipeline.DrainProviders");
                 m_PipelineResolve = Start(ProfilerCategory.Scripts, "MDT.Pipeline.Resolve");
-                m_PipelineResolveTarget = Start(ProfilerCategory.Scripts, "MDT.Pipeline.ResolveTarget");
-                m_PipelineResolveConflict = Start(ProfilerCategory.Scripts, "MDT.Pipeline.ResolveConflict");
                 m_PipelineWrite = Start(ProfilerCategory.Scripts, "MDT.Pipeline.Write");
                 m_PipelineWriteResolveMaterial = Start(ProfilerCategory.Scripts, "MDT.Pipeline.Write.ResolveMaterial");
                 m_PipelineWriteSetValue = Start(ProfilerCategory.Scripts, "MDT.Pipeline.Write.SetValue");
@@ -593,10 +706,7 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             public long SubmitValidateNanoseconds => LastValue(m_SubmitValidate);
             public long PassSyncInstancesNanoseconds => LastValue(m_PassSyncInstances);
             public long PassPipelineNanoseconds => LastValue(m_PassPipeline);
-            public long PipelineDrainProvidersNanoseconds => LastValue(m_PipelineDrainProviders);
             public long PipelineResolveNanoseconds => LastValue(m_PipelineResolve);
-            public long PipelineResolveTargetNanoseconds => LastValue(m_PipelineResolveTarget);
-            public long PipelineResolveConflictNanoseconds => LastValue(m_PipelineResolveConflict);
             public long PipelineWriteNanoseconds => LastValue(m_PipelineWrite);
             public long PipelineWriteResolveMaterialNanoseconds => LastValue(m_PipelineWriteResolveMaterial);
             public long PipelineWriteSetValueNanoseconds => LastValue(m_PipelineWriteSetValue);
@@ -611,10 +721,7 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                 DisposeRecorder(m_SubmitValidate);
                 DisposeRecorder(m_PassSyncInstances);
                 DisposeRecorder(m_PassPipeline);
-                DisposeRecorder(m_PipelineDrainProviders);
                 DisposeRecorder(m_PipelineResolve);
-                DisposeRecorder(m_PipelineResolveTarget);
-                DisposeRecorder(m_PipelineResolveConflict);
                 DisposeRecorder(m_PipelineWrite);
                 DisposeRecorder(m_PipelineWriteResolveMaterial);
                 DisposeRecorder(m_PipelineWriteSetValue);

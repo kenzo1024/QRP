@@ -122,26 +122,153 @@ namespace Rendering.MatDataTransfer.Runtime
         }
     }
 
-    internal readonly struct ParamWriteCommand
+    internal readonly struct ConflictKey : IEquatable<ConflictKey>
+    {
+        private readonly int m_InstanceId;
+        private readonly int m_RendererId;
+        private readonly int m_MaterialSlot;
+        private readonly int m_PropertyId;
+
+        public ConflictKey(int instanceId, int rendererId, int materialSlot, int propertyId)
+        {
+            m_InstanceId = instanceId;
+            m_RendererId = rendererId;
+            m_MaterialSlot = materialSlot;
+            m_PropertyId = propertyId;
+        }
+
+        public bool Equals(ConflictKey other)
+        {
+            return m_InstanceId == other.m_InstanceId
+                && m_RendererId == other.m_RendererId
+                && m_MaterialSlot == other.m_MaterialSlot
+                && m_PropertyId == other.m_PropertyId;
+        }
+
+        public override bool Equals(object obj)
+        {
+            return obj is ConflictKey other && Equals(other);
+        }
+
+        public override int GetHashCode()
+        {
+            unchecked
+            {
+                int hash = m_InstanceId;
+                hash = (hash * 397) ^ m_RendererId;
+                hash = (hash * 397) ^ m_MaterialSlot;
+                return (hash * 397) ^ m_PropertyId;
+            }
+        }
+    }
+
+    internal readonly struct ParamWriteTarget
+    {
+        public readonly Renderer Renderer;
+        public readonly int MaterialSlot;
+        public readonly int PropertyId;
+
+        public ParamWriteTarget(Renderer renderer, int materialSlot, int propertyId)
+        {
+            Renderer = renderer;
+            MaterialSlot = materialSlot;
+            PropertyId = propertyId;
+        }
+    }
+
+    internal readonly struct RequestStrength
+    {
+        public readonly int Layer;
+        public readonly int Priority;
+        public readonly int SubmitFrameIndex;
+        public readonly int Sequence;
+
+        public RequestStrength(int layer, int priority, int submitFrameIndex, int sequence)
+        {
+            Layer = layer;
+            Priority = priority;
+            SubmitFrameIndex = submitFrameIndex;
+            Sequence = sequence;
+        }
+    }
+
+    internal readonly struct ValidatedParamRequest
+    {
+        public readonly int InstanceId;
+        public readonly ConflictKey ConflictKey;
+        public readonly ParamWriteTarget WriteTarget;
+        public readonly ParamValue Value;
+        public readonly RequestStrength Strength;
+        public readonly int RequestId;
+
+        public ValidatedParamRequest(
+            int instanceId,
+            ConflictKey conflictKey,
+            ParamWriteTarget writeTarget,
+            ParamValue value,
+            RequestStrength strength,
+            int requestId)
+        {
+            InstanceId = instanceId;
+            ConflictKey = conflictKey;
+            WriteTarget = writeTarget;
+            Value = value;
+            Strength = strength;
+            RequestId = requestId;
+        }
+    }
+
+    internal readonly struct RequestDiagnosticContext
     {
         public readonly ParamTransferPayload Payload;
-        public readonly CatalogProperty Property;
         public readonly ParamBindingResolution BindingResolution;
-        public readonly Renderer Renderer;
-        public readonly string GameObjectPath;
 
-        public ParamWriteCommand(
+        public RequestDiagnosticContext(
             ParamTransferPayload payload,
-            CatalogProperty property,
-            ParamBindingResolution bindingResolution,
-            Renderer renderer,
-            string gameObjectPath)
+            ParamBindingResolution bindingResolution)
         {
             Payload = payload;
-            Property = property;
             BindingResolution = bindingResolution;
-            Renderer = renderer;
-            GameObjectPath = gameObjectPath;
+        }
+    }
+
+    internal readonly struct ConflictDecision
+    {
+        public readonly int LoserRequestId;
+        public readonly int WinnerRequestId;
+
+        public ConflictDecision(int loserRequestId, int winnerRequestId)
+        {
+            LoserRequestId = loserRequestId;
+            WinnerRequestId = winnerRequestId;
+        }
+    }
+
+    internal struct ResolutionStats
+    {
+        public int InputCount;
+        public int WinnerCount;
+        public int OverriddenCount;
+
+        public void Reset()
+        {
+            InputCount = 0;
+            WinnerCount = 0;
+            OverriddenCount = 0;
+        }
+    }
+
+    internal readonly struct ParamWriteCommand
+    {
+        public readonly ParamWriteTarget Target;
+        public readonly ParamValue Value;
+        public readonly int RequestId;
+
+        public ParamWriteCommand(ParamWriteTarget target, ParamValue value, int requestId)
+        {
+            Target = target;
+            Value = value;
+            RequestId = requestId;
         }
     }
 }

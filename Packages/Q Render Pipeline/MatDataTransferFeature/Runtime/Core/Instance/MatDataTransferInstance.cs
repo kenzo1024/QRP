@@ -123,6 +123,8 @@ namespace Rendering.MatDataTransfer.Runtime
     public partial class MatDataTransferInstance : MonoBehaviour
     {
         [SerializeField] private List<RendererMaterialBinding> bindings = new List<RendererMaterialBinding>();
+        [System.NonSerialized] private readonly Dictionary<long, RendererMaterialBinding> m_BindingMap =
+            new Dictionary<long, RendererMaterialBinding>();
 
         public IReadOnlyList<RendererMaterialBinding> Bindings => bindings;
 
@@ -200,6 +202,8 @@ namespace Rendering.MatDataTransfer.Runtime
                     bindings.Add(new RendererMaterialBinding(renderer, slot, transform));
                 }
             }
+
+            RebuildBindingMap();
         }
 
         public RendererMaterialBinding QueryBinding(Renderer renderer, int materialSlot, string shaderName = null)
@@ -212,13 +216,38 @@ namespace Rendering.MatDataTransfer.Runtime
             if (!IsValidBindingTarget(target))
                 return null;
 
-            foreach (var binding in bindings)
-            {
-                if (IsBindingMatch(binding, target, shaderName))
-                    return binding;
-            }
+            EnsureBindingMap();
+            int rendererId = target.Renderer != null
+                ? target.Renderer.GetInstanceID()
+                : target.RendererId;
+            if (!m_BindingMap.TryGetValue(GetBindingKey(rendererId, target.MaterialSlot), out RendererMaterialBinding binding))
+                return null;
 
-            return null;
+            return IsBindingMatch(binding, target, shaderName) ? binding : null;
+        }
+
+        private void EnsureBindingMap()
+        {
+            if (m_BindingMap.Count != bindings.Count)
+                RebuildBindingMap();
+        }
+
+        private void RebuildBindingMap()
+        {
+            m_BindingMap.Clear();
+            for (int i = 0; i < bindings.Count; i++)
+            {
+                RendererMaterialBinding binding = bindings[i];
+                if (binding == null || binding.RendererId == 0 || binding.MaterialSlot < 0)
+                    continue;
+
+                m_BindingMap[GetBindingKey(binding.RendererId, binding.MaterialSlot)] = binding;
+            }
+        }
+
+        private static long GetBindingKey(int rendererId, int materialSlot)
+        {
+            return ((long)rendererId << 32) ^ (uint)materialSlot;
         }
 
         private static bool IsValidBindingTarget(ParamRendererBinding target)

@@ -5,9 +5,11 @@ namespace Rendering.MatDataTransfer.Runtime
 {
     public partial class MatDataTransferFeature
     {
-        private void ApplyWriteCommands(IReadOnlyList<ParamWriteCommand> commands)
+        private void ApplyWriteCommands(
+            IReadOnlyList<ParamWriteCommand> commands,
+            IReadOnlyList<RequestDiagnosticContext> diagnostics)
         {
-            m_Writer?.Apply(commands);
+            m_Writer?.Apply(commands, diagnostics);
         }
 
         private void ApplyWriterSettings()

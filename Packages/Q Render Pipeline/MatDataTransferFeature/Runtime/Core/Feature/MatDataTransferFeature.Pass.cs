@@ -67,7 +67,7 @@ namespace Rendering.MatDataTransfer.Runtime
                     builder.SetRenderFunc(static (PassData data, UnsafeGraphContext ctx) =>
                     {
                         using (MatDataTransferProfiling.PassPipeline.Auto())
-                            data.feature.ExecuteRequestPipeline();
+                            data.feature.ExecuteTransferPipeline();
                     });
                 }
             }

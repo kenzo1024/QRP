@@ -21,7 +21,9 @@ namespace Rendering.MatDataTransfer.Runtime
             m_WriteMode = writeMode;
         }
 
-        internal void Apply(IReadOnlyList<ParamWriteCommand> commands)
+        internal void Apply(
+            IReadOnlyList<ParamWriteCommand> commands,
+            IReadOnlyList<RequestDiagnosticContext> diagnostics)
         {
             if (commands == null)
                 return;
@@ -35,17 +37,36 @@ namespace Rendering.MatDataTransfer.Runtime
                     ? ParamSubmitStep.WriterFailed("Write.Apply", failureReason)
                     : ParamSubmitStep.Applied("Write.Apply", "Write applied.");
 
-                ParamTransferPayload payload = command.Payload;
+                if (!TryGetDiagnostic(command.RequestId, diagnostics, out RequestDiagnosticContext diagnostic))
+                    continue;
+
+                ParamTransferPayload payload = diagnostic.Payload;
                 MatDataTransferLogging.AppendSubmitStep(
                     ref payload,
                     step);
                 MatDataTransferLogging.CaptureWriteSnapshot(
                     ref payload,
-                    command,
+                    diagnostic.BindingResolution,
+                    command.Target.Renderer,
                     writeMethod);
             }
 
             FlushPropertyBlocks();
+        }
+
+        private static bool TryGetDiagnostic(
+            int requestId,
+            IReadOnlyList<RequestDiagnosticContext> diagnostics,
+            out RequestDiagnosticContext diagnostic)
+        {
+            if (diagnostics != null && requestId >= 0 && requestId < diagnostics.Count)
+            {
+                diagnostic = diagnostics[requestId];
+                return true;
+            }
+
+            diagnostic = default;
+            return false;
         }
 
         internal void ClearWrittenState()
@@ -107,7 +128,7 @@ namespace Rendering.MatDataTransfer.Runtime
                 return false;
 
             using (MatDataTransferProfiling.PipelineWriteSetValue.Auto())
-                SetValue(block, target.PropertyId, command.Payload.Identity.Value);
+                SetValue(block, target.PropertyId, command.Value);
             return true;
         }
 
@@ -121,7 +142,7 @@ namespace Rendering.MatDataTransfer.Runtime
                 return false;
 
             using (MatDataTransferProfiling.PipelineWriteSetValue.Auto())
-                SetValue(material, target.PropertyId, command.Payload.Identity.Value);
+                SetValue(material, target.PropertyId, command.Value);
             return true;
         }
 
@@ -133,32 +154,19 @@ namespace Rendering.MatDataTransfer.Runtime
             target = default;
             failureReason = string.Empty;
 
-            if (command.Renderer == null)
+            if (command.Target.Renderer == null)
             {
                 failureReason = "Write target renderer is missing.";
                 return false;
             }
 
-            if (command.Property?.PropertyInfo == null)
-            {
-                failureReason = "Write target catalog property is missing.";
-                return false;
-            }
-
-            string propertyName = command.BindingResolution.PropertyName;
-            int propertyId = command.BindingResolution.PropertyId;
-            if (string.IsNullOrEmpty(propertyName) || propertyId == 0)
+            if (command.Target.PropertyId == 0)
             {
                 failureReason = "Write target shader property is empty.";
                 return false;
             }
 
-            int materialSlot = command.Payload.Identity.Binding.MaterialSlot;
-            target = new ParamWriteTarget(
-                command.Renderer,
-                materialSlot,
-                propertyName,
-                propertyId);
+            target = command.Target;
 
             return TryGetMaterial(target, true, out _, out failureReason);
         }
@@ -222,7 +230,7 @@ namespace Rendering.MatDataTransfer.Runtime
 
             if (!material.HasProperty(target.PropertyId))
             {
-                failureReason = $"Shader '{material.shader.name}' does not contain property '{target.PropertyName}'.";
+                failureReason = $"Shader '{material.shader.name}' does not contain property id {target.PropertyId}.";
                 return false;
             }
 
@@ -289,26 +297,6 @@ namespace Rendering.MatDataTransfer.Runtime
                 case ParamValueType.Texture:
                     material.SetTexture(propertyId, value.TextureValue);
                     break;
-            }
-        }
-
-        private readonly struct ParamWriteTarget
-        {
-            public readonly Renderer Renderer;
-            public readonly int MaterialSlot;
-            public readonly string PropertyName;
-            public readonly int PropertyId;
-
-            public ParamWriteTarget(
-                Renderer renderer,
-                int materialSlot,
-                string propertyName,
-                int propertyId)
-            {
-                Renderer = renderer;
-                MaterialSlot = materialSlot;
-                PropertyName = propertyName;
-                PropertyId = propertyId;
             }
         }
 

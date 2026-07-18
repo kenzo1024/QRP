@@ -29,8 +29,6 @@ namespace Rendering.MatDataTransfer.Runtime
 
         [SerializeField] private List<ShaderPropertyCatalog> m_Catalogs =
             new List<ShaderPropertyCatalog>();
-        [SerializeField] private GenericMaterialParameterProviderSettings m_GenericProviderSettings =
-            new GenericMaterialParameterProviderSettings();
         [SerializeField] private MatDataTransferLoggingSettings m_LoggingSettings =
             new MatDataTransferLoggingSettings();
         [SerializeField] private ParamWriteMethod m_EditModeWriteMode =
@@ -44,21 +42,19 @@ namespace Rendering.MatDataTransfer.Runtime
         #region Runtime Fields
 
         [NonSerialized] private bool m_IsPrimaryInstance;
+        [NonSerialized] private readonly Dictionary<string, ShaderPropertyCatalog> m_CatalogByShader =
+            new Dictionary<string, ShaderPropertyCatalog>(StringComparer.Ordinal);
 
         #endregion
 
         #region Properties
 
         public IReadOnlyList<ShaderPropertyCatalog> Catalogs => m_Catalogs;
-        public GenericMaterialParameterProviderSettings GenericProviderSettings => m_GenericProviderSettings;
         public MatDataTransferLoggingSettings LoggingSettings => m_LoggingSettings;
         public ParamWriteMethod EditModeWriteMode => m_EditModeWriteMode;
         public ParamWriteMethod RuntimeWriteMode => m_RuntimeWriteMode;
         public int MaxInstanceCount => m_MaxInstanceCount;
         public int ActiveInstanceCount => GetActiveInstanceCount();
-
-        internal bool IsGenericMaterialParameterProviderEnabled =>
-            m_GenericProviderSettings != null && m_GenericProviderSettings.Enabled;
 
         #endregion
 
@@ -66,7 +62,10 @@ namespace Rendering.MatDataTransfer.Runtime
 
         public bool TryGetCatalogForShader(string shaderName, out ShaderPropertyCatalog catalog)
         {
-            return MaterialBindingResolver.TryGetCatalogForShader(m_Catalogs, shaderName, out catalog);
+            catalog = null;
+            return !string.IsNullOrEmpty(shaderName)
+                && m_CatalogByShader.TryGetValue(shaderName, out catalog)
+                && catalog != null;
         }
 
         public bool TryGetProperty(
@@ -75,12 +74,12 @@ namespace Rendering.MatDataTransfer.Runtime
             out ShaderPropertyCatalog catalog,
             out CatalogProperty property)
         {
-            return MaterialBindingResolver.TryGetProperty(
-                m_Catalogs,
-                shaderName,
-                semanticKey,
-                out catalog,
-                out property);
+            property = null;
+            if (!TryGetCatalogForShader(shaderName, out catalog)
+                || !catalog.TryGetProperty(semanticKey, out property))
+                return false;
+
+            return property != null && property.Status == CatalogPropertyStatus.Ok;
         }
 
         #endregion
@@ -164,16 +163,14 @@ namespace Rendering.MatDataTransfer.Runtime
             RefreshCatalogCaches();
 
             InitializeInstanceRegister(m_MaxInstanceCount);
-            InitializeProviders();
-            InitializeRequestPipeline();
+            InitializeTransferPipeline();
             InitializeRenderPass();
         }
 
         private void CleanupPrimaryInstance()
         {
             DisposeRenderPass();
-            DisposeRequestPipeline();
-            DisposeProviders();
+            DisposeTransferPipeline();
             ClearWrittenState();
             DisposeLogger();
             ClearQueuedRequests();
@@ -188,8 +185,6 @@ namespace Rendering.MatDataTransfer.Runtime
 
         private void EnsureSerializedSettings()
         {
-            if (m_GenericProviderSettings == null)
-                m_GenericProviderSettings = new GenericMaterialParameterProviderSettings();
             if (m_LoggingSettings == null)
                 m_LoggingSettings = new MatDataTransferLoggingSettings();
             if (m_Catalogs == null)
@@ -224,8 +219,17 @@ namespace Rendering.MatDataTransfer.Runtime
             if (m_Catalogs == null)
                 m_Catalogs = new List<ShaderPropertyCatalog>();
 
+            m_CatalogByShader.Clear();
             for (int i = 0; i < m_Catalogs.Count; i++)
-                m_Catalogs[i]?.RebuildPropertyMap();
+            {
+                ShaderPropertyCatalog catalog = m_Catalogs[i];
+                if (catalog == null)
+                    continue;
+
+                catalog.RebuildPropertyMap();
+                if (!string.IsNullOrEmpty(catalog.ShaderName))
+                    m_CatalogByShader[catalog.ShaderName] = catalog;
+            }
         }
 
 #if UNITY_EDITOR

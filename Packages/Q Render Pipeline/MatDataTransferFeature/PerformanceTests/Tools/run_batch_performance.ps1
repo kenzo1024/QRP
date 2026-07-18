@@ -1,7 +1,7 @@
 param(
     [string]$ProjectPath = "D:\_Proj\QTAU6",
     [string]$UnityPath = "C:\Program Files\Unity\Hub\Editor\6000.4.7f1\Editor\Unity.exe",
-    [ValidateSet("Smoke", "Baseline", "Pressure", "All")]
+    [ValidateSet("Smoke", "Baseline", "Pressure", "Resolver", "ResolverGc", "All")]
     [string]$ScenarioSet = "Baseline",
     [int]$Repeat = 1,
     [int]$MaxAttempts = 5,
@@ -33,6 +33,26 @@ function Get-ScenarioNames {
                 "B05_LargeObjectPressure",
                 "B06_ManySourcesPressure",
                 "B09_Logging"
+            )
+        }
+        "Resolver" {
+            return @(
+                "B01_SmallSingleSource",
+                "B02_SmallConflict",
+                "B03_ObjectScale",
+                "B04_MainRealLoad",
+                "B06_ManySourcesPressure",
+                "B05_LargeObjectPressure"
+            )
+        }
+        "ResolverGc" {
+            return @(
+                "B01_SmallSingleSource",
+                "B02_SmallConflict",
+                "B03_ObjectScale",
+                "B04_MainRealLoad",
+                "B06_ManySourcesPressure",
+                "B05_LargeObjectPressure"
             )
         }
         "All" {
@@ -101,6 +121,14 @@ for ($repeatIndex = 1; $repeatIndex -le $Repeat; $repeatIndex++) {
                 "-mdtOutputRoot", (Quote-CommandLinePath $OutputRoot),
                 "-mdtRunStamp", $scenarioStamp
             )
+
+            if ($ScenarioSet -eq "Resolver") {
+                $arguments += "-mdtResolverOnly"
+            }
+
+            if ($ScenarioSet -eq "ResolverGc") {
+                $arguments += "-mdtResolverGc"
+            }
 
             $process = Start-Process -FilePath $UnityPath -ArgumentList $arguments -NoNewWindow -PassThru -Wait
             if ($process.ExitCode -eq 0 -and (Test-Path -LiteralPath $resultPath)) {
