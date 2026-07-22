@@ -56,9 +56,13 @@ namespace Rendering.MatDataTransfer.Runtime
 
         internal void ApplySettings(MatDataTransferLoggingSettings settings)
         {
+            bool wasEnabled = m_EnableLogging;
             m_EnableLogging = settings != null && settings.EnableLogging;
             m_AllowReleaseFileLogging = settings != null && settings.AllowReleaseFileLogging;
             Configure(settings != null ? settings.MaxTimelineFrames : DefaultMaxTimelineFramesValue);
+
+            if (wasEnabled && !m_EnableLogging)
+                DisableCapture();
         }
 
         public void Configure(int maxTimelineFrames)
@@ -74,15 +78,80 @@ namespace Rendering.MatDataTransfer.Runtime
 
         public List<ParamWriteResult> GetReceiptList() => m_FrameReceipts;
 
-        internal static void AppendSubmitStep(
+        internal static void RecordSubmitStep(
             ref ParamTransferPayload payload,
-            ParamSubmitStep step)
+            ParamSubmitStage stage,
+            ParamWriteStatus status,
+            ParamWriteResultCode code = ParamWriteResultCode.None,
+            string message = null)
         {
-            Instance.AppendSubmitStepInternal(ref payload, step);
+            if (payload.Trace == null)
+                payload.Trace = new ParamSubmitTrace();
+
+            Instance.RecordTraceStepInternal(
+                payload.Trace,
+                stage,
+                status,
+                code,
+                message,
+                null);
+        }
+
+        internal static void RecordTraceStep(
+            ParamSubmitTrace trace,
+            ParamSubmitStage stage,
+            ParamWriteStatus status,
+            ParamWriteResultCode code = ParamWriteResultCode.None,
+            string message = null)
+        {
+            Instance.RecordTraceStepInternal(
+                trace,
+                stage,
+                status,
+                code,
+                message,
+                null);
+        }
+
+        internal static void RecordScopeExpanded(
+            ParamSubmitTrace trace,
+            int submittedCount,
+            int skippedCount)
+        {
+            trace?.UpdateSummary(
+                ParamWriteStatus.Queued,
+                ParamWriteResultCode.None);
+
+            if (!Instance.m_EnableLogging || trace == null)
+                return;
+
+            Instance.AddDetailedStep(
+                trace,
+                ParamSubmitStage.ScopeExpand,
+                ParamWriteStatus.Queued,
+                ParamWriteResultCode.None,
+                $"Scope expanded: {submittedCount} submitted, {skippedCount} skipped.",
+                null);
+        }
+
+        internal static int AddRequestDiagnostic(
+            ref ParamTransferPayload payload,
+            ParamBindingResolution bindingResolution,
+            List<RequestDiagnosticContext> diagnostics)
+        {
+            if (!Instance.m_EnableLogging || diagnostics == null)
+                return -1;
+
+            int diagnosticIndex = diagnostics.Count;
+            diagnostics.Add(new RequestDiagnosticContext(payload, bindingResolution));
+            return diagnosticIndex;
         }
 
         internal static void CaptureSubmitSnapshot(ref ParamTransferPayload payload)
         {
+            if (!Instance.m_EnableLogging)
+                return;
+
             using (MatDataTransferProfiling.LoggingCapture.Auto())
             {
                 Instance.CaptureSubmitSnapshotInternal(
@@ -94,49 +163,146 @@ namespace Rendering.MatDataTransfer.Runtime
             }
         }
 
-        internal static void CaptureWriteSnapshot(
-            ref ParamTransferPayload payload,
-            ParamBindingResolution bindingResolution,
+        internal static void RecordWrite(
+            ParamSubmitTrace trace,
+            int diagnosticIndex,
+            IReadOnlyList<RequestDiagnosticContext> diagnostics,
             Renderer renderer,
-            ParamWriteMethod writeMethod)
+            ParamWriteMethod writeMethod,
+            string failureReason)
         {
+            MatDataTransferLogging logging = Instance;
+            bool isEnabled = logging.m_EnableLogging;
+            if (trace == null && !isEnabled)
+                return;
+
+            bool hasDiagnostic = false;
+            RequestDiagnosticContext diagnostic = default;
+            if (trace == null && isEnabled)
+            {
+                hasDiagnostic = TryGetDiagnostic(
+                    diagnosticIndex,
+                    diagnostics,
+                    out diagnostic);
+                if (hasDiagnostic)
+                    trace = diagnostic.Payload.Trace;
+            }
+
+            ParamWriteStatus status = writeMethod == ParamWriteMethod.None
+                ? ParamWriteStatus.WriterFailed
+                : ParamWriteStatus.Applied;
+            ParamWriteResultCode code = writeMethod == ParamWriteMethod.None
+                ? ParamWriteResultCode.WriterFailed
+                : ParamWriteResultCode.None;
+            string message = writeMethod == ParamWriteMethod.None
+                ? (string.IsNullOrEmpty(failureReason) ? "WriterFailed" : failureReason)
+                : "Write applied.";
+            trace?.UpdateSummary(status, code, message);
+
+            if (!isEnabled)
+                return;
+
+            if (!hasDiagnostic
+                && !TryGetDiagnostic(diagnosticIndex, diagnostics, out diagnostic))
+                return;
+            if (trace == null)
+                return;
+
+            ParamTransferPayload payload = diagnostic.Payload;
+            payload.Trace = trace;
+            logging.AddDetailedStep(
+                trace,
+                ParamSubmitStage.WriteApply,
+                status,
+                code,
+                message,
+                null);
+
             using (MatDataTransferProfiling.LoggingCapture.Auto())
             {
-                Instance.CaptureSubmitSnapshotInternal(
+                logging.CaptureSubmitSnapshotInternal(
                     ref payload,
-                    bindingResolution,
+                    diagnostic.BindingResolution,
                     writeMethod,
                     string.Empty,
                     BuildRendererPath(renderer));
             }
         }
 
-        internal static void CaptureResolvedSnapshot(
+        internal static void RecordResolvedSnapshot(
             ref ParamTransferPayload payload,
             ParamBindingResolution binding,
-            ParamSubmitStep step,
-            string gameObjectPath,
+            string overriddenBySourceId,
             Renderer renderer)
-        {
-            using (MatDataTransferProfiling.LoggingCapture.Auto())
-            {
-                Instance.CaptureResolvedSnapshotInternal(
-                    ref payload,
-                    binding,
-                    step,
-                    gameObjectPath,
-                    BuildRendererPath(renderer));
-            }
-        }
-
-        private void AppendSubmitStepInternal(
-            ref ParamTransferPayload payload,
-            ParamSubmitStep step)
         {
             if (payload.Trace == null)
                 payload.Trace = new ParamSubmitTrace();
 
-            payload.Trace.AddStep(step);
+            if (!Instance.RecordTraceStepInternal(
+                    payload.Trace,
+                    ParamSubmitStage.ResolveConflict,
+                    ParamWriteStatus.Overridden,
+                    ParamWriteResultCode.OverriddenByStrongerRequest,
+                    "OverriddenByStrongerRequest",
+                    overriddenBySourceId))
+                return;
+
+            using (MatDataTransferProfiling.LoggingCapture.Auto())
+            {
+                Instance.CaptureSubmitSnapshotInternal(
+                    ref payload,
+                    binding,
+                    ParamWriteMethod.None,
+                    string.Empty,
+                    BuildRendererPath(renderer));
+            }
+        }
+
+        internal static void RecordOverriddenSummary(ParamSubmitTrace trace)
+        {
+            trace?.UpdateSummary(
+                ParamWriteStatus.Overridden,
+                ParamWriteResultCode.OverriddenByStrongerRequest,
+                "OverriddenByStrongerRequest");
+        }
+
+        private bool RecordTraceStepInternal(
+            ParamSubmitTrace trace,
+            ParamSubmitStage stage,
+            ParamWriteStatus status,
+            ParamWriteResultCode code,
+            string message,
+            string overriddenBySourceId)
+        {
+            trace?.UpdateSummary(status, code, message);
+            if (!m_EnableLogging || trace == null)
+                return false;
+
+            AddDetailedStep(
+                trace,
+                stage,
+                status,
+                code,
+                message,
+                overriddenBySourceId);
+            return true;
+        }
+
+        private void AddDetailedStep(
+            ParamSubmitTrace trace,
+            ParamSubmitStage stage,
+            ParamWriteStatus status,
+            ParamWriteResultCode code,
+            string message,
+            string overriddenBySourceId)
+        {
+            ParamSubmitStep step = new ParamSubmitStep(
+                GetStageName(stage),
+                status,
+                code,
+                message,
+                overriddenBySourceId);
+            trace.AddStep(step);
             WriteConsoleStep(step);
         }
 
@@ -166,27 +332,28 @@ namespace Rendering.MatDataTransfer.Runtime
                 CompleteFrame();
         }
 
-        private void CaptureResolvedSnapshotInternal(
-            ref ParamTransferPayload payload,
-            ParamBindingResolution binding,
-            ParamSubmitStep step,
-            string gameObjectPath,
-            string rendererPath)
+        private static bool TryGetDiagnostic(
+            int diagnosticIndex,
+            IReadOnlyList<RequestDiagnosticContext> diagnostics,
+            out RequestDiagnosticContext diagnostic)
         {
-            AppendSubmitStepInternal(
-                ref payload,
-                step);
+            if (diagnostics != null
+                && diagnosticIndex >= 0
+                && diagnosticIndex < diagnostics.Count)
+            {
+                diagnostic = diagnostics[diagnosticIndex];
+                return true;
+            }
 
-            CaptureSubmitSnapshotInternal(
-                ref payload,
-                binding,
-                ParamWriteMethod.None,
-                gameObjectPath,
-                rendererPath);
+            diagnostic = default;
+            return false;
         }
 
         public void BeginFrame()
         {
+            if (!m_EnableLogging)
+                return;
+
             m_FrameReceipts.Clear();
             m_FrameTimelineRecords.Clear();
             m_IsFrameOpen = true;
@@ -194,6 +361,9 @@ namespace Rendering.MatDataTransfer.Runtime
 
         public void CompleteFrame()
         {
+            if (!m_EnableLogging)
+                return;
+
             using (MatDataTransferProfiling.LoggingCommitTimeline.Auto())
                 CompleteFrameProfiled();
         }
@@ -201,13 +371,6 @@ namespace Rendering.MatDataTransfer.Runtime
         private void CompleteFrameProfiled()
         {
             m_IsFrameOpen = false;
-            if (!m_EnableLogging)
-            {
-                ClearEditorTimelineRecords();
-                m_FileWriter.Close();
-                return;
-            }
-
             if (m_FrameTimelineRecords.Count == 0)
             {
                 if (!IsFileTimelineAllowed())
@@ -228,6 +391,15 @@ namespace Rendering.MatDataTransfer.Runtime
         public void ClearTimelineRecords()
         {
             ClearEditorTimelineRecords();
+        }
+
+        private void DisableCapture()
+        {
+            m_IsFrameOpen = false;
+            m_FrameReceipts.Clear();
+            m_FrameTimelineRecords.Clear();
+            ClearEditorTimelineRecords();
+            m_FileWriter.Close();
         }
 
         private bool IsTimelineCaptureEnabled()
@@ -458,6 +630,31 @@ namespace Rendering.MatDataTransfer.Runtime
             return renderer != null
                 ? MatDataTransferFeature.GetTransformPath(renderer.transform)
                 : string.Empty;
+        }
+
+        private static string GetStageName(ParamSubmitStage stage)
+        {
+            switch (stage)
+            {
+                case ParamSubmitStage.ScopeBegin:
+                    return "Scope.Begin";
+                case ParamSubmitStage.ScopeValidate:
+                    return "Scope.Validate";
+                case ParamSubmitStage.ScopeExpand:
+                    return "Scope.Expand";
+                case ParamSubmitStage.SubmitBegin:
+                    return "Submit.Begin";
+                case ParamSubmitStage.SubmitValidate:
+                    return "Submit.Validate";
+                case ParamSubmitStage.SubmitQueue:
+                    return "Submit.Queue";
+                case ParamSubmitStage.ResolveConflict:
+                    return "Resolve.Conflict";
+                case ParamSubmitStage.WriteApply:
+                    return "Write.Apply";
+                default:
+                    return string.Empty;
+            }
         }
 
         private static void WriteConsoleStep(ParamSubmitStep step)

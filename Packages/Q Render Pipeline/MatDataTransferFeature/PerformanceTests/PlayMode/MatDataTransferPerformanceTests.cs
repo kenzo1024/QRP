@@ -82,6 +82,109 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                 .Run();
         }
 
+        [Test]
+        public void LoggingDisabled_RecordStep_UpdatesSummaryWithoutDetailedStep()
+        {
+            ParamSubmitTrace trace = new ParamSubmitTrace();
+
+            MatDataTransferLogging.RecordTraceStep(
+                trace,
+                ParamSubmitStage.SubmitQueue,
+                ParamWriteStatus.Queued);
+
+            Assert.That(trace.Status, Is.EqualTo(ParamWriteStatus.Queued));
+            Assert.That(trace.IsAccepted, Is.True);
+            Assert.That(trace.Current, Is.Null);
+        }
+
+        [Test]
+        public void LoggingEnabled_RecordStep_CreatesDetailedStep()
+        {
+            MatDataTransferLogging.Instance.ApplySettings(new MatDataTransferLoggingSettings
+            {
+                EnableLogging = true
+            });
+            ParamSubmitTrace trace = new ParamSubmitTrace();
+
+            MatDataTransferLogging.RecordTraceStep(
+                trace,
+                ParamSubmitStage.SubmitQueue,
+                ParamWriteStatus.Queued);
+
+            Assert.That(trace.Current, Is.Not.Null);
+            Assert.That(trace.Current.Stage, Is.EqualTo("Submit.Queue"));
+            Assert.That(trace.Status, Is.EqualTo(ParamWriteStatus.Queued));
+        }
+
+        [Test]
+        public void LoggingDisabled_Writer_UpdatesTraceWithoutReceipt()
+        {
+            FillPayloads(1);
+            ParamWriteCommand resolved = ResolveSingleWinningCommand()[0];
+            ParamSubmitTrace trace = new ParamSubmitTrace();
+            ParamWriteCommand command = new ParamWriteCommand(
+                resolved.Target,
+                resolved.Value,
+                resolved.RequestId,
+                trace,
+                -1);
+
+            m_Writer.Apply(new[] { command }, null);
+
+            Assert.That(trace.Status, Is.EqualTo(ParamWriteStatus.Applied));
+            Assert.That(trace.Current, Is.Null);
+            Assert.That(m_Writer.LastStats.AppliedCount, Is.EqualTo(1));
+            Assert.That(MatDataTransferLogging.Instance.LastReceipts, Is.Empty);
+        }
+
+        [Test]
+        public void LoggingDisabled_OverriddenRequest_UpdatesSummaryOnly()
+        {
+            ParamSubmitTrace trace = new ParamSubmitTrace();
+
+            MatDataTransferLogging.RecordOverriddenSummary(trace);
+
+            Assert.That(trace.Status, Is.EqualTo(ParamWriteStatus.Overridden));
+            Assert.That(trace.Code, Is.EqualTo(ParamWriteResultCode.OverriddenByStrongerRequest));
+            Assert.That(trace.Current, Is.Null);
+        }
+
+        [Test]
+        public void ForMaterialBatch_MissingTarget_RejectsEntireBatch()
+        {
+            ParamBatchWrite[] writes =
+            {
+                new ParamBatchWrite("key.a", ParamValue.Float(1f)),
+                new ParamBatchWrite("key.b", ParamValue.Float(2f))
+            };
+
+            ParamBatchSubmitResult result = MatDataTransferAPI.ForMaterialBatch(
+                null,
+                null,
+                0,
+                writes,
+                new MatDataTransferSubmitSource { Id = "Test.Batch" },
+                ParamWriteLayer.Gameplay);
+
+            Assert.That(result.TotalCount, Is.EqualTo(2));
+            Assert.That(result.AcceptedCount, Is.EqualTo(0));
+            Assert.That(result.RejectedCount, Is.EqualTo(2));
+            Assert.That(result.FirstRejectedIndex, Is.EqualTo(0));
+            Assert.That(result.FirstErrorCode, Is.EqualTo(ParamWriteResultCode.InstanceMissing));
+        }
+
+        [Test]
+        public void CatalogLookup_IsCaseInsensitiveAndTrimsOnlyWhenNeeded()
+        {
+            CatalogProperty expected = m_Catalog.Properties[0];
+            string semanticKey = expected.SuggestedSemanticKey;
+
+            Assert.That(m_Catalog.TryGetProperty(semanticKey.ToUpperInvariant(), out CatalogProperty upper), Is.True);
+            Assert.That(upper, Is.SameAs(expected));
+            Assert.That(m_Catalog.TryGetProperty("  " + semanticKey + "  ", out CatalogProperty padded), Is.True);
+            Assert.That(padded, Is.SameAs(expected));
+        }
+
         private void CreateFixedFixture()
         {
             Shader shader = Shader.Find("Universal Render Pipeline/Unlit");

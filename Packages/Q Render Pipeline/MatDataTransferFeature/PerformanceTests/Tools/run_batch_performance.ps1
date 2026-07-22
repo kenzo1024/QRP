@@ -1,14 +1,18 @@
 param(
     [string]$ProjectPath = "D:\_Proj\QTAU6",
     [string]$UnityPath = "C:\Program Files\Unity\Hub\Editor\6000.4.7f1\Editor\Unity.exe",
-    [ValidateSet("Smoke", "Baseline", "Pressure", "Resolver", "ResolverGc", "All")]
+    [ValidateSet("Smoke", "Stable", "StableGc", "ModuleStages", "Baseline", "Pressure", "Resolver", "ResolverGc", "Submit", "Writer", "Stages", "StageGc", "All")]
     [string]$ScenarioSet = "Baseline",
     [int]$Repeat = 1,
     [int]$MaxAttempts = 5,
-    [string]$OutputRoot = "D:\_QData\QOBData\望月 Work\工具\角色材质统一参数管理 Feature\PerformanceResults\BatchMode"
+    [string]$OutputRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
+    $OutputRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\Results\BatchMode"))
+}
 
 function Get-ScenarioNames {
     param([string]$SetName)
@@ -16,6 +20,42 @@ function Get-ScenarioNames {
     switch ($SetName) {
         "Smoke" {
             return @("Smoke_10Objects")
+        }
+        "Stable" {
+            return @(
+                "Smoke_10Objects",
+                "B04_MainRealLoad",
+                "B07_ForInstance",
+                "B09_Logging",
+                "B10_BatchMainRealLoad",
+                "S04_SubmitMainRealLoad",
+                "R04_ResolverMainConflict",
+                "W03_WriterMainBatch",
+                "W06_WriterMainBatchWithDiagnostics"
+            )
+        }
+        "ModuleStages" {
+            return @(
+                "S01_SubmitSingle",
+                "S04_SubmitMainRealLoad",
+                "S05_SubmitMainRealLoadBatch",
+                "R00_ResolverEmpty",
+                "R01_ResolverSingle",
+                "R03_ResolverMainSingleSource",
+                "R04_ResolverMainConflict",
+                "W00_WriterEmpty",
+                "W01_WriterSingle",
+                "W03_WriterMainBatch",
+                "W06_WriterMainBatchWithDiagnostics"
+            )
+        }
+        "StableGc" {
+            return @(
+                "S04_SubmitMainRealLoad",
+                "R04_ResolverMainConflict",
+                "W03_WriterMainBatch",
+                "W06_WriterMainBatchWithDiagnostics"
+            )
         }
         "Baseline" {
             return @(
@@ -25,7 +65,8 @@ function Get-ScenarioNames {
                 "B03_ObjectScale",
                 "B04_MainRealLoad",
                 "B07_ForInstance",
-                "B08_NarrowProperties"
+                "B08_NarrowProperties",
+                "B10_BatchMainRealLoad"
             )
         }
         "Pressure" {
@@ -55,6 +96,69 @@ function Get-ScenarioNames {
                 "B05_LargeObjectPressure"
             )
         }
+        "Submit" {
+            return @(
+                "S01_SubmitSingle",
+                "S02_SubmitSmallSingleSource",
+                "S03_SubmitSmallConflict",
+                "S04_SubmitMainRealLoad",
+                "S05_SubmitMainRealLoadBatch"
+            )
+        }
+        "Writer" {
+            return @(
+                "W00_WriterEmpty",
+                "W01_WriterSingle",
+                "W02_WriterSmallBatch",
+                "W03_WriterMainBatch",
+                "W04_WriterLargeBatch",
+                "W05_WriterPropertyBlock",
+                "W06_WriterMainBatchWithDiagnostics",
+                "W07_WriterMainBatchInterleavedTargets"
+            )
+        }
+        "Stages" {
+            return @(
+                "S01_SubmitSingle",
+                "S02_SubmitSmallSingleSource",
+                "S03_SubmitSmallConflict",
+                "S04_SubmitMainRealLoad",
+                "S05_SubmitMainRealLoadBatch",
+                "R00_ResolverEmpty",
+                "R01_ResolverSingle",
+                "R03_ResolverMainSingleSource",
+                "R04_ResolverMainConflict",
+                "W00_WriterEmpty",
+                "W01_WriterSingle",
+                "W02_WriterSmallBatch",
+                "W03_WriterMainBatch",
+                "W04_WriterLargeBatch",
+                "W05_WriterPropertyBlock",
+                "W06_WriterMainBatchWithDiagnostics",
+                "W07_WriterMainBatchInterleavedTargets"
+            )
+        }
+        "StageGc" {
+            return @(
+                "S01_SubmitSingle",
+                "S02_SubmitSmallSingleSource",
+                "S03_SubmitSmallConflict",
+                "S04_SubmitMainRealLoad",
+                "S05_SubmitMainRealLoadBatch",
+                "R00_ResolverEmpty",
+                "R01_ResolverSingle",
+                "R03_ResolverMainSingleSource",
+                "R04_ResolverMainConflict",
+                "W00_WriterEmpty",
+                "W01_WriterSingle",
+                "W02_WriterSmallBatch",
+                "W03_WriterMainBatch",
+                "W04_WriterLargeBatch",
+                "W05_WriterPropertyBlock",
+                "W06_WriterMainBatchWithDiagnostics",
+                "W07_WriterMainBatchInterleavedTargets"
+            )
+        }
         "All" {
             return @(
                 "Smoke_10Objects",
@@ -67,7 +171,8 @@ function Get-ScenarioNames {
                 "B06_ManySourcesPressure",
                 "B07_ForInstance",
                 "B08_NarrowProperties",
-                "B09_Logging"
+                "B09_Logging",
+                "B10_BatchMainRealLoad"
             )
         }
     }
@@ -130,6 +235,10 @@ for ($repeatIndex = 1; $repeatIndex -le $Repeat; $repeatIndex++) {
                 $arguments += "-mdtResolverGc"
             }
 
+            if ($ScenarioSet -eq "StageGc" -or $ScenarioSet -eq "StableGc") {
+                $arguments += "-mdtStageGc"
+            }
+
             $process = Start-Process -FilePath $UnityPath -ArgumentList $arguments -NoNewWindow -PassThru -Wait
             if ($process.ExitCode -eq 0 -and (Test-Path -LiteralPath $resultPath)) {
                 $attemptPassed = $true
@@ -146,8 +255,6 @@ for ($repeatIndex = 1; $repeatIndex -le $Repeat; $repeatIndex++) {
 }
 
 Remove-Item -LiteralPath $runnerRoot -Recurse -Force
-Get-ChildItem -LiteralPath $OutputRoot -File -Filter '*.meta' -ErrorAction SilentlyContinue |
-    Remove-Item -Force
 
 Write-Host "MatDataTransfer batch performance run completed."
 Write-Host "Output: $OutputRoot"

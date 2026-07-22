@@ -200,6 +200,8 @@ namespace Rendering.MatDataTransfer.Runtime
         public readonly ParamValue Value;
         public readonly RequestStrength Strength;
         public readonly int RequestId;
+        public readonly ParamSubmitTrace Trace;
+        public readonly int DiagnosticIndex;
 
         public ValidatedParamRequest(
             int instanceId,
@@ -208,6 +210,27 @@ namespace Rendering.MatDataTransfer.Runtime
             ParamValue value,
             RequestStrength strength,
             int requestId)
+            : this(
+                instanceId,
+                conflictKey,
+                writeTarget,
+                value,
+                strength,
+                requestId,
+                null,
+                requestId)
+        {
+        }
+
+        public ValidatedParamRequest(
+            int instanceId,
+            ConflictKey conflictKey,
+            ParamWriteTarget writeTarget,
+            ParamValue value,
+            RequestStrength strength,
+            int requestId,
+            ParamSubmitTrace trace,
+            int diagnosticIndex)
         {
             InstanceId = instanceId;
             ConflictKey = conflictKey;
@@ -215,6 +238,8 @@ namespace Rendering.MatDataTransfer.Runtime
             Value = value;
             Strength = strength;
             RequestId = requestId;
+            Trace = trace;
+            DiagnosticIndex = diagnosticIndex;
         }
     }
 
@@ -234,13 +259,13 @@ namespace Rendering.MatDataTransfer.Runtime
 
     internal readonly struct ConflictDecision
     {
-        public readonly int LoserRequestId;
-        public readonly int WinnerRequestId;
+        public readonly int LoserDiagnosticIndex;
+        public readonly int WinnerDiagnosticIndex;
 
-        public ConflictDecision(int loserRequestId, int winnerRequestId)
+        public ConflictDecision(int loserDiagnosticIndex, int winnerDiagnosticIndex)
         {
-            LoserRequestId = loserRequestId;
-            WinnerRequestId = winnerRequestId;
+            LoserDiagnosticIndex = loserDiagnosticIndex;
+            WinnerDiagnosticIndex = winnerDiagnosticIndex;
         }
     }
 
@@ -258,17 +283,51 @@ namespace Rendering.MatDataTransfer.Runtime
         }
     }
 
+    internal struct WriterStats
+    {
+        public int AppliedCount;
+        public int FailedCount;
+
+        public void Reset()
+        {
+            AppliedCount = 0;
+            FailedCount = 0;
+        }
+
+        public void Add(ParamWriteMethod writeMethod)
+        {
+            if (writeMethod == ParamWriteMethod.None)
+                FailedCount++;
+            else
+                AppliedCount++;
+        }
+    }
+
     internal readonly struct ParamWriteCommand
     {
         public readonly ParamWriteTarget Target;
         public readonly ParamValue Value;
         public readonly int RequestId;
+        public readonly ParamSubmitTrace Trace;
+        public readonly int DiagnosticIndex;
 
         public ParamWriteCommand(ParamWriteTarget target, ParamValue value, int requestId)
+            : this(target, value, requestId, null, requestId)
+        {
+        }
+
+        public ParamWriteCommand(
+            ParamWriteTarget target,
+            ParamValue value,
+            int requestId,
+            ParamSubmitTrace trace,
+            int diagnosticIndex)
         {
             Target = target;
             Value = value;
             RequestId = requestId;
+            Trace = trace;
+            DiagnosticIndex = diagnosticIndex;
         }
     }
 }

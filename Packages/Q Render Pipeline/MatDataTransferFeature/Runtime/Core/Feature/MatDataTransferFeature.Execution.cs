@@ -43,6 +43,7 @@ namespace Rendering.MatDataTransfer.Runtime
 
                 ApplyWriterSettings();
                 m_ResolutionStats.Reset();
+                m_Writer.ResetStats();
                 if (m_ValidatedRequests.Count == 0)
                     return;
 
@@ -117,7 +118,7 @@ namespace Rendering.MatDataTransfer.Runtime
             RendererMaterialBinding binding,
             ParamBindingResolution bindingResolution)
         {
-            int requestId = m_RequestDiagnostics.Count;
+            int requestId = m_ValidatedRequests.Count;
             int instanceId = payload.Identity.Target != null
                 ? payload.Identity.Target.InstanceId
                 : -1;
@@ -132,18 +133,62 @@ namespace Rendering.MatDataTransfer.Runtime
                 payload.SubmitFrameIndex,
                 payload.Sequence);
 
-            m_RequestDiagnostics.Add(new RequestDiagnosticContext(payload, bindingResolution));
+            int diagnosticIndex = MatDataTransferLogging.AddRequestDiagnostic(
+                ref payload,
+                bindingResolution,
+                m_RequestDiagnostics);
             m_ValidatedRequests.Add(new ValidatedParamRequest(
                 instanceId,
                 new ConflictKey(instanceId, binding.RendererId, binding.MaterialSlot, propertyId),
                 writeTarget,
                 payload.Identity.Value,
                 strength,
-                requestId));
-            MatDataTransferLogging.AppendSubmitStep(
+                requestId,
+                payload.Trace,
+                diagnosticIndex));
+            MatDataTransferLogging.RecordSubmitStep(
                 ref payload,
-                ParamSubmitStep.Queued("Submit.Queue", "Submit accepted."));
+                ParamSubmitStage.SubmitQueue,
+                ParamWriteStatus.Queued,
+                ParamWriteResultCode.None,
+                "Submit accepted.");
             MatDataTransferRuntime.RequestEditorUpdate();
+        }
+
+        internal void EnqueueValidatedBatchItem(
+            MatDataTransferInstance target,
+            RendererMaterialBinding binding,
+            ParamValue value,
+            ParamWriteLayer layer,
+            int priority,
+            int submitFrameIndex,
+            int sequence,
+            int propertyId)
+        {
+            int requestId = m_ValidatedRequests.Count;
+            int instanceId = target != null ? target.InstanceId : -1;
+            ParamWriteTarget writeTarget = new ParamWriteTarget(
+                binding != null ? binding.Renderer : null,
+                binding != null ? binding.MaterialSlot : -1,
+                propertyId);
+            RequestStrength strength = new RequestStrength(
+                ParamWriteLayers.GetStrength(layer),
+                priority,
+                submitFrameIndex,
+                sequence);
+            m_ValidatedRequests.Add(new ValidatedParamRequest(
+                instanceId,
+                new ConflictKey(
+                    instanceId,
+                    binding != null ? binding.RendererId : 0,
+                    binding != null ? binding.MaterialSlot : -1,
+                    propertyId),
+                writeTarget,
+                value,
+                strength,
+                requestId,
+                null,
+                -1));
         }
 
         private void CaptureConflictDecisions()
@@ -151,18 +196,15 @@ namespace Rendering.MatDataTransfer.Runtime
             for (int i = 0; i < m_ConflictDecisions.Count; i++)
             {
                 ConflictDecision decision = m_ConflictDecisions[i];
-                if (!TryGetDiagnostic(decision.LoserRequestId, out RequestDiagnosticContext loser)
-                    || !TryGetDiagnostic(decision.WinnerRequestId, out RequestDiagnosticContext winner))
+                if (!TryGetDiagnostic(decision.LoserDiagnosticIndex, out RequestDiagnosticContext loser)
+                    || !TryGetDiagnostic(decision.WinnerDiagnosticIndex, out RequestDiagnosticContext winner))
                     continue;
 
                 ParamTransferPayload payload = loser.Payload;
-                MatDataTransferLogging.CaptureResolvedSnapshot(
+                MatDataTransferLogging.RecordResolvedSnapshot(
                     ref payload,
                     loser.BindingResolution,
-                    ParamSubmitStep.Overridden(
-                        "Resolve.Conflict",
-                        winner.Payload.Identity.SourceId),
-                    string.Empty,
+                    winner.Payload.Identity.SourceId,
                     payload.Identity.Binding.Renderer);
             }
         }
@@ -193,12 +235,11 @@ namespace Rendering.MatDataTransfer.Runtime
 
             for (int i = m_ValidatedRequests.Count - 1; i >= 0; i--)
             {
-                if (!ReferenceEquals(m_RequestDiagnostics[i].Payload.Identity.Target, instance))
+                if (m_ValidatedRequests[i].InstanceId != instance.InstanceId)
                     continue;
 
                 int lastIndex = m_ValidatedRequests.Count - 1;
                 m_ValidatedRequests.RemoveAt(i);
-                m_RequestDiagnostics.RemoveAt(i);
                 for (int requestIndex = i; requestIndex < lastIndex; requestIndex++)
                 {
                     ValidatedParamRequest request = m_ValidatedRequests[requestIndex];
@@ -208,7 +249,9 @@ namespace Rendering.MatDataTransfer.Runtime
                         request.WriteTarget,
                         request.Value,
                         request.Strength,
-                        requestIndex);
+                        requestIndex,
+                        request.Trace,
+                        request.DiagnosticIndex);
                 }
             }
 

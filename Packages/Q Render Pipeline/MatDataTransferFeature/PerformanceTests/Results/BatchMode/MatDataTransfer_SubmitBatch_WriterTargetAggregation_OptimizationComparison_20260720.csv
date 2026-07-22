@@ -1,0 +1,11 @@
+ScenarioId,ScenarioDescription,MetricScope,ComparisonBasis,Comparable,BaselineMedianMs,CurrentMedianMs,MedianDeltaPercent,BaselineP95Ms,CurrentP95Ms,P95DeltaPercent,BaselineGcMedianBytes,CurrentGcMedianBytes,GcDeltaPercent,CurrentMaterialArrayReadMedian,Conclusion
+S04,"10,800 次单条 ForMaterial 提交，300 对象 x 12 属性 x 3 来源","Submit stage","上一阶段日志减负后的 S04",True,42.4179,41.3335,-2.56,45.2622,42.0337,-7.13,2194200,1512000,-31.09,0,"单次 API 重复 Binding/Catalog 查询已去除；仍有单条 Trace 成本"
+S05,"与 S04 相同的 10,800 逻辑写入，合并为 900 个同目标 Batch","Submit stage","本轮单次 API S04，相同逻辑输入但 API 形态不同",False,41.3335,19.0015,-54.03,42.0337,19.5148,-53.58,1512000,0,-100.00,0,"Batch 共用目标和 Catalog；结果用于评估可迁移业务收益，不能视为单次 API 原地加速"
+W03,"3,600 Command、300 个 MaterialInstance 目标，按目标连续排列","Writer stage","上一阶段日志减负后的 W03",True,4.7602,2.7216,-42.83,5.0590,2.9157,-42.37,288000,12000,-95.83,300,"一次 Apply 内每个 RendererId + Slot 只解析一次材质"
+W05,"3,600 Command、300 个 MaterialPropertyBlock 目标","Writer stage","原始 Writer 专项 W05",True,3.3880,3.3581,-0.88,3.6134,3.5656,-1.32,316800,12000,-96.21,300,"时间基本持平；材质数组读取从 3,600 降到 300，GC 明显下降"
+W07,"与 W03 同规模，但 3,600 Command 按属性交错 300 个目标","Writer stage","本轮 W03，仅用于验证非连续目标缓存",False,2.7216,2.6922,-1.08,2.9157,2.9358,0.69,12000,12000,0.00,300,"交错顺序下仍保持每目标一次材质解析，证明实现不依赖连续 Command"
+B04,"300 对象 x 12 属性 x 3 来源，单条 ForMaterial、关闭日志的完整流水线","Full pipeline submission","上一阶段日志减负后的 B04",True,52.9318,49.0199,-7.39,58.1320,50.5060,-13.12,2494066,1534838,-38.46,,"单次 Submit 去重和 Writer 聚合后的完整业务收益"
+B07,"与 B04 同规模，使用 ForInstance 范围提交","Full pipeline submission","新增回归口径，无直接性能基线",False,,54.6043,,,60.6209,,,3263826,,,"功能与性能回归通过；Submit Marker 含 Scope 外层和子 Submit 嵌套采样"
+B09,"与 B04 相同输入，开启完整 Timeline 日志","Full pipeline submission","上一阶段日志减负后的 B09",True,167.6801,163.4503,-2.52,290.8379,265.2939,-8.78,30681574,29723374,-3.12,,"日志详细路径仍分配 29.72 MB，是下一阶段首要问题"
+B10,"与 B04 相同逻辑规模，使用 ForMaterialBatch、关闭日志的完整流水线","Full pipeline submission","原始未优化 B04，相同逻辑输入但 API 形态不同",False,78.4999,27.8587,-64.51,91.8615,28.7507,-68.70,8527666,23038,-99.73,,"表示日志减负、Batch 和 Writer 聚合的累计收益"
+B10,"与 B04 相同逻辑规模，使用 ForMaterialBatch、关闭日志的完整流水线","Full pipeline submission","本轮单次 API B04，相同逻辑输入但 API 形态不同",False,49.0199,27.8587,-43.17,50.5060,28.7507,-43.08,1534838,23038,-98.50,,"表示同版本业务从逐条提交迁移到窄 Batch API 的潜在收益"

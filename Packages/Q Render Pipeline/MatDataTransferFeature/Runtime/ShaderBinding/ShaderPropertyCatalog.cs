@@ -28,8 +28,8 @@ namespace Rendering.MatDataTransfer.Runtime
         public bool TryGetProperty(string semanticKey, out CatalogProperty property)
         {
             EnsurePropertyMap();
-            string normalizedKey = NormalizeSemanticKey(semanticKey);
-            return m_PropertyMap.TryGetValue(normalizedKey, out property);
+            string lookupKey = TrimSemanticKeyIfNeeded(semanticKey);
+            return m_PropertyMap.TryGetValue(lookupKey, out property);
         }
 
         public void SetShader(Shader targetShader)
@@ -130,7 +130,7 @@ namespace Rendering.MatDataTransfer.Runtime
 
         public void RebuildPropertyMap()
         {
-            m_PropertyMap = new Dictionary<string, CatalogProperty>();
+            m_PropertyMap = new Dictionary<string, CatalogProperty>(StringComparer.OrdinalIgnoreCase);
             if (properties == null)
                 return;
 
@@ -178,6 +178,16 @@ namespace Rendering.MatDataTransfer.Runtime
             return string.IsNullOrWhiteSpace(value)
                 ? string.Empty
                 : value.Trim().ToLowerInvariant();
+        }
+
+        private static string TrimSemanticKeyIfNeeded(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+                return string.Empty;
+
+            return char.IsWhiteSpace(value[0]) || char.IsWhiteSpace(value[value.Length - 1])
+                ? value.Trim()
+                : value;
         }
 
         private string ResolveSemanticKey(

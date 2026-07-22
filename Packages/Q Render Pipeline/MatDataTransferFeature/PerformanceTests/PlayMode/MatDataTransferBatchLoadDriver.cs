@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Rendering.MatDataTransfer.Runtime;
 using UnityEngine;
 
@@ -34,6 +35,12 @@ namespace Rendering.MatDataTransfer.PerformanceTests
         private MatDataTransferObject[] m_Objects;
         private MatDataTransferProperty[] m_Properties;
         private MatDataTransferSubmitSource[] m_Sources;
+        private MatDataTransferSubmitOperation[] m_CachedSubmitOperations;
+        private MatDataTransferBatchSubmitOperation[] m_CachedBatchSubmitOperations;
+        private ParamBatchWrite[] m_BatchWriteBuffer;
+        private Material[] m_DirectMaterials;
+        private MaterialPropertyBlock[] m_DirectPropertyBlocks;
+        private ParamValue[] m_DirectValues;
 
         public int ObjectCount => m_Objects != null ? m_Objects.Length : 0;
         public int PropertyCount => m_Properties != null ? m_Properties.Length : 0;
@@ -48,6 +55,12 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             CacheProperties(scenario.PropertyCount);
             CacheSources(scenario.SourceCount);
             m_Objects = null;
+            m_CachedSubmitOperations = null;
+            m_CachedBatchSubmitOperations = null;
+            m_BatchWriteBuffer = new ParamBatchWrite[scenario.PropertyCount];
+            m_DirectMaterials = null;
+            m_DirectPropertyBlocks = null;
+            m_DirectValues = null;
         }
 
         internal void CreateRenderObjects()
@@ -88,6 +101,12 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             m_Objects = null;
             m_Properties = null;
             m_Sources = null;
+            m_CachedSubmitOperations = null;
+            m_CachedBatchSubmitOperations = null;
+            m_BatchWriteBuffer = null;
+            m_DirectMaterials = null;
+            m_DirectPropertyBlocks = null;
+            m_DirectValues = null;
         }
 
         public bool AreAllInstancesReady()
@@ -109,6 +128,12 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             if (m_Scenario.ApiMode == MatDataTransferBatchApiMode.None || m_Scenario.SourceCount <= 0)
                 return;
 
+            if (m_Scenario.ApiMode == MatDataTransferBatchApiMode.ForMaterialBatch)
+            {
+                SubmitBatchFrame(logicalFrame);
+                return;
+            }
+
             for (int sourceIndex = 0; sourceIndex < m_Sources.Length; sourceIndex++)
             {
                 MatDataTransferSubmitSource source = m_Sources[sourceIndex];
@@ -126,13 +151,404 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             }
         }
 
+        internal void PrepareDirectWriteTargets()
+        {
+            if (m_Objects == null)
+                throw new InvalidOperationException("Render objects must be created before direct writes are prepared.");
+
+            m_DirectMaterials = new Material[m_Objects.Length];
+            m_DirectPropertyBlocks = new MaterialPropertyBlock[m_Objects.Length];
+            m_DirectValues = new ParamValue[m_Objects.Length * m_Properties.Length];
+            for (int i = 0; i < m_Objects.Length; i++)
+            {
+                m_DirectMaterials[i] = m_Objects[i].Renderer.material;
+                m_DirectPropertyBlocks[i] = new MaterialPropertyBlock();
+            }
+        }
+
+        internal void PrepareDirectValues(int logicalFrame)
+        {
+            EnsureDirectWriteTargetsReady();
+            int sourceIndex = Math.Max(0, m_Scenario.SourceCount - 1);
+            for (int objectIndex = 0; objectIndex < m_Objects.Length; objectIndex++)
+            {
+                int valueOffset = objectIndex * m_Properties.Length;
+                for (int propertyIndex = 0; propertyIndex < m_Properties.Length; propertyIndex++)
+                {
+                    MatDataTransferProperty property = m_Properties[propertyIndex];
+                    m_DirectValues[valueOffset + propertyIndex] = BuildValue(
+                        property.ValueType,
+                        logicalFrame,
+                        objectIndex,
+                        propertyIndex,
+                        sourceIndex);
+                }
+            }
+        }
+
+        internal int SetAllMaterialProperties()
+        {
+            EnsureDirectWriteTargetsReady();
+            int writeCount = 0;
+            for (int objectIndex = 0; objectIndex < m_Objects.Length; objectIndex++)
+            {
+                Material material = m_DirectMaterials[objectIndex];
+                int valueOffset = objectIndex * m_Properties.Length;
+                for (int propertyIndex = 0; propertyIndex < m_Properties.Length; propertyIndex++)
+                {
+                    MatDataTransferProperty property = m_Properties[propertyIndex];
+                    SetMaterialValue(
+                        material,
+                        property,
+                        m_DirectValues[valueOffset + propertyIndex]);
+                    writeCount++;
+                }
+            }
+
+            return writeCount;
+        }
+
+        internal int SetAllPropertyBlockProperties()
+        {
+            EnsureDirectWriteTargetsReady();
+            int writeCount = 0;
+            for (int objectIndex = 0; objectIndex < m_Objects.Length; objectIndex++)
+            {
+                MaterialPropertyBlock block = m_DirectPropertyBlocks[objectIndex];
+                block.Clear();
+                int valueOffset = objectIndex * m_Properties.Length;
+                for (int propertyIndex = 0; propertyIndex < m_Properties.Length; propertyIndex++)
+                {
+                    MatDataTransferProperty property = m_Properties[propertyIndex];
+                    SetPropertyBlockValue(
+                        block,
+                        property,
+                        m_DirectValues[valueOffset + propertyIndex]);
+                    writeCount++;
+                }
+
+                m_Objects[objectIndex].Renderer.SetPropertyBlock(block, 0);
+            }
+
+            return writeCount;
+        }
+
+        internal void ClearDirectPropertyBlocks()
+        {
+            if (m_Objects == null)
+                return;
+
+            for (int i = 0; i < m_Objects.Length; i++)
+                m_Objects[i].Renderer.SetPropertyBlock(null, 0);
+        }
+
+        internal void AssertDirectMaterialValues(int logicalFrame, int sampleCount)
+        {
+            AssertMaterialValues(logicalFrame, sampleCount, Math.Max(0, m_Scenario.SourceCount - 1));
+        }
+
+        internal void AssertDirectPropertyBlockValues(int logicalFrame, int sampleCount)
+        {
+            AssertPropertyBlockValues(
+                logicalFrame,
+                sampleCount,
+                Math.Max(0, m_Scenario.SourceCount - 1));
+        }
+
+        internal void CacheSubmitOperations(int logicalFrame)
+        {
+            int operationCount = m_Objects.Length * m_Properties.Length * m_Sources.Length;
+            m_CachedSubmitOperations = new MatDataTransferSubmitOperation[operationCount];
+            int operationIndex = 0;
+            for (int sourceIndex = 0; sourceIndex < m_Sources.Length; sourceIndex++)
+            {
+                MatDataTransferSubmitSource source = m_Sources[sourceIndex];
+                int priority = sourceIndex * 10;
+                for (int objectIndex = 0; objectIndex < m_Objects.Length; objectIndex++)
+                {
+                    MatDataTransferObject target = m_Objects[objectIndex];
+                    for (int propertyIndex = 0; propertyIndex < m_Properties.Length; propertyIndex++)
+                    {
+                        MatDataTransferProperty property = m_Properties[propertyIndex];
+                        ParamValue value = BuildValue(
+                            property.ValueType,
+                            logicalFrame,
+                            objectIndex,
+                            propertyIndex,
+                            sourceIndex);
+                        m_CachedSubmitOperations[operationIndex++] = new MatDataTransferSubmitOperation(
+                            target,
+                            property.SemanticKey,
+                            value,
+                            source,
+                            priority);
+                    }
+                }
+            }
+        }
+
+        internal int SubmitCachedOperations()
+        {
+            if (m_CachedSubmitOperations == null)
+                throw new InvalidOperationException("Submit operations have not been cached.");
+
+            for (int i = 0; i < m_CachedSubmitOperations.Length; i++)
+            {
+                MatDataTransferSubmitOperation operation = m_CachedSubmitOperations[i];
+                Submit(
+                    operation.Target,
+                    operation.SemanticKey,
+                    operation.Value,
+                    operation.Source,
+                    operation.Priority);
+            }
+
+            return m_CachedSubmitOperations.Length;
+        }
+
+        internal void CacheBatchSubmitOperations(int logicalFrame)
+        {
+            int batchCount = m_Objects.Length * m_Sources.Length;
+            m_CachedBatchSubmitOperations = new MatDataTransferBatchSubmitOperation[batchCount];
+            int batchIndex = 0;
+            for (int sourceIndex = 0; sourceIndex < m_Sources.Length; sourceIndex++)
+            {
+                MatDataTransferSubmitSource source = m_Sources[sourceIndex];
+                int priority = sourceIndex * 10;
+                for (int objectIndex = 0; objectIndex < m_Objects.Length; objectIndex++)
+                {
+                    ParamBatchWrite[] writes = new ParamBatchWrite[m_Properties.Length];
+                    for (int propertyIndex = 0; propertyIndex < m_Properties.Length; propertyIndex++)
+                    {
+                        MatDataTransferProperty property = m_Properties[propertyIndex];
+                        writes[propertyIndex] = new ParamBatchWrite(
+                            property.SemanticKey,
+                            BuildValue(
+                                property.ValueType,
+                                logicalFrame,
+                                objectIndex,
+                                propertyIndex,
+                                sourceIndex));
+                    }
+
+                    m_CachedBatchSubmitOperations[batchIndex++] = new MatDataTransferBatchSubmitOperation(
+                        m_Objects[objectIndex],
+                        writes,
+                        source,
+                        priority);
+                }
+            }
+        }
+
+        internal int SubmitCachedBatches()
+        {
+            if (m_CachedBatchSubmitOperations == null)
+                throw new InvalidOperationException("Batch submit operations have not been cached.");
+
+            int submitted = 0;
+            for (int i = 0; i < m_CachedBatchSubmitOperations.Length; i++)
+            {
+                MatDataTransferBatchSubmitOperation operation = m_CachedBatchSubmitOperations[i];
+                ParamBatchSubmitResult result = MatDataTransferAPI.ForMaterialBatch(
+                    operation.Target.Instance,
+                    operation.Target.Renderer,
+                    0,
+                    operation.Writes,
+                    operation.Source,
+                    ParamWriteLayer.Gameplay,
+                    operation.Priority);
+                submitted += result.AcceptedCount;
+            }
+
+            return submitted;
+        }
+
+        internal void BuildWriteCommands(List<ParamWriteCommand> commands, int logicalFrame)
+        {
+            if (commands == null)
+                throw new ArgumentNullException(nameof(commands));
+
+            commands.Clear();
+            int requestId = 0;
+            for (int objectIndex = 0; objectIndex < m_Objects.Length; objectIndex++)
+            {
+                MatDataTransferObject target = m_Objects[objectIndex];
+                for (int propertyIndex = 0; propertyIndex < m_Properties.Length; propertyIndex++)
+                {
+                    MatDataTransferProperty property = m_Properties[propertyIndex];
+                    commands.Add(new ParamWriteCommand(
+                        new ParamWriteTarget(target.Renderer, 0, property.PropertyId),
+                        BuildValue(property.ValueType, logicalFrame, objectIndex, propertyIndex, 0),
+                        requestId++));
+                }
+            }
+        }
+
+        internal void BuildValidatedRequests(
+            List<ValidatedParamRequest> requests,
+            int logicalFrame)
+        {
+            if (requests == null)
+                throw new ArgumentNullException(nameof(requests));
+
+            requests.Clear();
+            int requestId = 0;
+            for (int sourceIndex = 0; sourceIndex < m_Sources.Length; sourceIndex++)
+            {
+                int priority = sourceIndex * 10;
+                for (int objectIndex = 0; objectIndex < m_Objects.Length; objectIndex++)
+                {
+                    MatDataTransferObject target = m_Objects[objectIndex];
+                    int instanceId = target.Instance.InstanceId;
+                    int rendererId = target.Renderer.GetInstanceID();
+                    for (int propertyIndex = 0; propertyIndex < m_Properties.Length; propertyIndex++)
+                    {
+                        MatDataTransferProperty property = m_Properties[propertyIndex];
+                        ParamWriteTarget writeTarget = new ParamWriteTarget(
+                            target.Renderer,
+                            0,
+                            property.PropertyId);
+                        requests.Add(new ValidatedParamRequest(
+                            instanceId,
+                            new ConflictKey(instanceId, rendererId, 0, property.PropertyId),
+                            writeTarget,
+                            BuildValue(
+                                property.ValueType,
+                                logicalFrame,
+                                objectIndex,
+                                propertyIndex,
+                                sourceIndex),
+                            new RequestStrength(
+                                ParamWriteLayers.GetStrength(ParamWriteLayer.Gameplay),
+                                priority,
+                                logicalFrame,
+                                requestId),
+                            requestId++));
+                    }
+                }
+            }
+        }
+
+        internal void BuildInterleavedWriteCommands(List<ParamWriteCommand> commands, int logicalFrame)
+        {
+            if (commands == null)
+                throw new ArgumentNullException(nameof(commands));
+
+            commands.Clear();
+            int requestId = 0;
+            for (int propertyIndex = 0; propertyIndex < m_Properties.Length; propertyIndex++)
+            {
+                MatDataTransferProperty property = m_Properties[propertyIndex];
+                for (int objectIndex = 0; objectIndex < m_Objects.Length; objectIndex++)
+                {
+                    MatDataTransferObject target = m_Objects[objectIndex];
+                    commands.Add(new ParamWriteCommand(
+                        new ParamWriteTarget(target.Renderer, 0, property.PropertyId),
+                        BuildValue(property.ValueType, logicalFrame, objectIndex, propertyIndex, 0),
+                        requestId++));
+                }
+            }
+        }
+
+        internal void BuildWriteDiagnostics(
+            List<RequestDiagnosticContext> diagnostics,
+            int logicalFrame)
+        {
+            if (diagnostics == null)
+                throw new ArgumentNullException(nameof(diagnostics));
+
+            diagnostics.Clear();
+            MatDataTransferSubmitSource source = m_Sources[0];
+            for (int objectIndex = 0; objectIndex < m_Objects.Length; objectIndex++)
+            {
+                MatDataTransferObject target = m_Objects[objectIndex];
+                RendererMaterialBinding binding = target.Instance.QueryBinding(target.Renderer, 0);
+                if (binding == null)
+                    throw new InvalidOperationException("Writer diagnostic binding is missing.");
+
+                for (int propertyIndex = 0; propertyIndex < m_Properties.Length; propertyIndex++)
+                {
+                    MatDataTransferProperty property = m_Properties[propertyIndex];
+                    ParamValue value = BuildValue(
+                        property.ValueType,
+                        logicalFrame,
+                        objectIndex,
+                        propertyIndex,
+                        0);
+                    ParamTransferPayload payload = new ParamTransferPayload(
+                        new ParamRequestIdentity(target.Instance, source, property.SemanticKey, value, binding),
+                        new ParamWriteConfig(ParamWriteLayer.Gameplay));
+                    ParamBindingResolution resolution = new ParamBindingResolution(
+                        property.SemanticKey,
+                        binding.ShaderName,
+                        "StageWriter",
+                        property.PropertyName,
+                        property.PropertyId);
+                    diagnostics.Add(new RequestDiagnosticContext(payload, resolution));
+                }
+            }
+        }
+
+        internal void WarmMaterialInstances()
+        {
+            for (int i = 0; i < m_Objects.Length; i++)
+                _ = m_Objects[i].Renderer.material;
+        }
+
+        internal void AssertWriterValues(int logicalFrame, int sampleCount)
+        {
+            AssertMaterialValues(logicalFrame, sampleCount);
+        }
+
+        internal void AssertPropertyBlockValues(int logicalFrame, int sampleCount)
+        {
+            AssertPropertyBlockValues(logicalFrame, sampleCount, 0);
+        }
+
+        private void AssertPropertyBlockValues(int logicalFrame, int sampleCount, int sourceIndex)
+        {
+            int count = Mathf.Min(sampleCount, m_Objects.Length);
+            MaterialPropertyBlock block = new MaterialPropertyBlock();
+            for (int i = 0; i < count; i++)
+            {
+                int objectIndex = SelectSampleIndex(i, count, m_Objects.Length);
+                m_Objects[objectIndex].Renderer.GetPropertyBlock(block, 0);
+                for (int propertyIndex = 0; propertyIndex < m_Properties.Length; propertyIndex++)
+                {
+                    MatDataTransferProperty property = m_Properties[propertyIndex];
+                    ParamValue expected = BuildValue(
+                        property.ValueType,
+                        logicalFrame,
+                        objectIndex,
+                        propertyIndex,
+                        sourceIndex);
+                    switch (property.ValueType)
+                    {
+                        case ParamValueType.Color:
+                            AssertClose(block.GetColor(property.PropertyId), expected.ColorValue, property.PropertyName);
+                            break;
+                        case ParamValueType.Vector:
+                            AssertClose(block.GetVector(property.PropertyId), expected.VectorValue, property.PropertyName);
+                            break;
+                        case ParamValueType.Float:
+                            AssertClose(block.GetFloat(property.PropertyId), expected.FloatValue, property.PropertyName);
+                            break;
+                    }
+                }
+            }
+        }
+
         public void AssertMaterialValues(int logicalFrame, int sampleCount)
         {
             if (m_Scenario.SourceCount <= 0)
                 return;
 
+            AssertMaterialValues(logicalFrame, sampleCount, m_Scenario.SourceCount - 1);
+        }
+
+        private void AssertMaterialValues(int logicalFrame, int sampleCount, int sourceIndex)
+        {
             int count = Mathf.Min(sampleCount, m_Objects.Length);
-            int winningSource = m_Scenario.SourceCount - 1;
             for (int i = 0; i < count; i++)
             {
                 int objectIndex = SelectSampleIndex(i, count, m_Objects.Length);
@@ -143,7 +559,7 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                 for (int propertyIndex = 0; propertyIndex < m_Properties.Length; propertyIndex++)
                 {
                     MatDataTransferProperty property = m_Properties[propertyIndex];
-                    ParamValue expected = BuildValue(property.ValueType, logicalFrame, objectIndex, propertyIndex, winningSource);
+                    ParamValue expected = BuildValue(property.ValueType, logicalFrame, objectIndex, propertyIndex, sourceIndex);
                     AssertMaterialValue(material, property, expected);
                 }
             }
@@ -178,6 +594,40 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                         ParamWriteLayer.Gameplay,
                         priority);
                     break;
+            }
+        }
+
+        private void SubmitBatchFrame(int logicalFrame)
+        {
+            for (int sourceIndex = 0; sourceIndex < m_Sources.Length; sourceIndex++)
+            {
+                MatDataTransferSubmitSource source = m_Sources[sourceIndex];
+                int priority = sourceIndex * 10;
+                for (int objectIndex = 0; objectIndex < m_Objects.Length; objectIndex++)
+                {
+                    MatDataTransferObject target = m_Objects[objectIndex];
+                    for (int propertyIndex = 0; propertyIndex < m_Properties.Length; propertyIndex++)
+                    {
+                        MatDataTransferProperty property = m_Properties[propertyIndex];
+                        m_BatchWriteBuffer[propertyIndex] = new ParamBatchWrite(
+                            property.SemanticKey,
+                            BuildValue(
+                                property.ValueType,
+                                logicalFrame,
+                                objectIndex,
+                                propertyIndex,
+                                sourceIndex));
+                    }
+
+                    MatDataTransferAPI.ForMaterialBatch(
+                        target.Instance,
+                        target.Renderer,
+                        0,
+                        m_BatchWriteBuffer,
+                        source,
+                        ParamWriteLayer.Gameplay,
+                        priority);
+                }
             }
         }
 
@@ -352,6 +802,50 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             }
         }
 
+        private void EnsureDirectWriteTargetsReady()
+        {
+            if (m_DirectMaterials == null || m_DirectPropertyBlocks == null || m_DirectValues == null)
+                throw new InvalidOperationException("Direct write targets have not been prepared.");
+        }
+
+        private static void SetMaterialValue(
+            Material material,
+            MatDataTransferProperty property,
+            ParamValue value)
+        {
+            switch (property.ValueType)
+            {
+                case ParamValueType.Color:
+                    material.SetColor(property.PropertyId, value.ColorValue);
+                    break;
+                case ParamValueType.Vector:
+                    material.SetVector(property.PropertyId, value.VectorValue);
+                    break;
+                case ParamValueType.Float:
+                    material.SetFloat(property.PropertyId, value.FloatValue);
+                    break;
+            }
+        }
+
+        private static void SetPropertyBlockValue(
+            MaterialPropertyBlock block,
+            MatDataTransferProperty property,
+            ParamValue value)
+        {
+            switch (property.ValueType)
+            {
+                case ParamValueType.Color:
+                    block.SetColor(property.PropertyId, value.ColorValue);
+                    break;
+                case ParamValueType.Vector:
+                    block.SetVector(property.PropertyId, value.VectorValue);
+                    break;
+                case ParamValueType.Float:
+                    block.SetFloat(property.PropertyId, value.FloatValue);
+                    break;
+            }
+        }
+
         private static void AssertMaterialValue(
             Material material,
             MatDataTransferProperty property,
@@ -441,6 +935,49 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                 GameObject = gameObject;
                 Renderer = renderer;
                 Instance = null;
+            }
+        }
+
+        private readonly struct MatDataTransferSubmitOperation
+        {
+            public readonly MatDataTransferObject Target;
+            public readonly string SemanticKey;
+            public readonly ParamValue Value;
+            public readonly MatDataTransferSubmitSource Source;
+            public readonly int Priority;
+
+            public MatDataTransferSubmitOperation(
+                MatDataTransferObject target,
+                string semanticKey,
+                ParamValue value,
+                MatDataTransferSubmitSource source,
+                int priority)
+            {
+                Target = target;
+                SemanticKey = semanticKey;
+                Value = value;
+                Source = source;
+                Priority = priority;
+            }
+        }
+
+        private readonly struct MatDataTransferBatchSubmitOperation
+        {
+            public readonly MatDataTransferObject Target;
+            public readonly ParamBatchWrite[] Writes;
+            public readonly MatDataTransferSubmitSource Source;
+            public readonly int Priority;
+
+            public MatDataTransferBatchSubmitOperation(
+                MatDataTransferObject target,
+                ParamBatchWrite[] writes,
+                MatDataTransferSubmitSource source,
+                int priority)
+            {
+                Target = target;
+                Writes = writes;
+                Source = source;
+                Priority = priority;
             }
         }
 

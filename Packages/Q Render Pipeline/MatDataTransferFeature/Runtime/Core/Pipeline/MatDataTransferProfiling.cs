@@ -8,9 +8,11 @@ namespace Rendering.MatDataTransfer.Runtime
 {
     internal static class MatDataTransferProfiling
     {
-        internal static readonly ProfilerMarker SubmitTotal = new ProfilerMarker("MDT.Submit.Total");
         internal static readonly ProfilerMarker SubmitValidate = new ProfilerMarker("MDT.Submit.Validate");
         internal static readonly ProfilerMarker SubmitExpandScope = new ProfilerMarker("MDT.Submit.ExpandScope");
+        internal static readonly ProfilerMarker ModuleSubmitter = new ProfilerMarker("MDT.Module.Submitter");
+        internal static readonly ProfilerMarker ModuleResolver = new ProfilerMarker("MDT.Module.Resolver");
+        internal static readonly ProfilerMarker ModuleWriter = new ProfilerMarker("MDT.Module.Writer");
         internal static readonly ProfilerMarker PassSyncInstances = new ProfilerMarker("MDT.Pass.SyncInstances");
         internal static readonly ProfilerMarker PassPipeline = new ProfilerMarker("MDT.Pass.Pipeline");
         internal static readonly ProfilerMarker PipelineResolve = new ProfilerMarker("MDT.Pipeline.Resolve");

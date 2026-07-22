@@ -1,0 +1,194 @@
+#pragma kernel GenerateSamples
+#pragma target 4.5
+
+struct CharUnifiedShadowGpuInput
+{
+    float4 boundsCenterAndMode;
+    float4 boundsExtentsAndCount;
+    float4 lightDirectionAndDeltaTime;
+    float4 settings;
+    float4 control;
+
+    float4 anchorPosition0;
+    float4 anchorPosition1;
+    float4 anchorPosition2;
+    float4 anchorPosition3;
+    float4 anchorPosition4;
+    float4 anchorPosition5;
+
+    float4 anchorParameters0;
+    float4 anchorParameters1;
+    float4 anchorParameters2;
+    float4 anchorParameters3;
+    float4 anchorParameters4;
+    float4 anchorParameters5;
+};
+
+StructuredBuffer<CharUnifiedShadowGpuInput> _MdtCharUnifiedShadowInputs;
+RWStructuredBuffer<uint4> _MdtCharUnifiedShadowRanges;
+RWStructuredBuffer<float4> _MdtCharUnifiedShadowSamples;
+uint _MdtCharUnifiedShadowInstanceCapacity;
+
+static const uint SAMPLE_COUNT = 6u;
+static const uint RANGE_VALID = 1u;
+static const float2 HALTON_SAMPLES[6] =
+{
+    float2(0.5, 1.0 / 3.0),
+    float2(0.25, 2.0 / 3.0),
+    float2(0.75, 1.0 / 9.0),
+    float2(0.125, 4.0 / 9.0),
+    float2(0.625, 7.0 / 9.0),
+    float2(0.375, 2.0 / 9.0),
+};
+
+float4 LoadAnchorPosition(CharUnifiedShadowGpuInput input, uint index)
+{
+    switch (index)
+    {
+        case 0u: return input.anchorPosition0;
+        case 1u: return input.anchorPosition1;
+        case 2u: return input.anchorPosition2;
+        case 3u: return input.anchorPosition3;
+        case 4u: return input.anchorPosition4;
+        default: return input.anchorPosition5;
+    }
+}
+
+float LoadAnchorBias(CharUnifiedShadowGpuInput input, uint index)
+{
+    switch (index)
+    {
+        case 0u: return input.anchorParameters0.x;
+        case 1u: return input.anchorParameters1.x;
+        case 2u: return input.anchorParameters2.x;
+        case 3u: return input.anchorParameters3.x;
+        case 4u: return input.anchorParameters4.x;
+        default: return input.anchorParameters5.x;
+    }
+}
+
+void BuildProjectionBasis(float3 lightDirection, out float3 axisU, out float3 axisV)
+{
+    float3 referenceAxis = abs(dot(lightDirection, float3(0.0, 1.0, 0.0))) > 0.95
+        ? float3(1.0, 0.0, 0.0)
+        : float3(0.0, 1.0, 0.0);
+    axisU = normalize(cross(lightDirection, referenceAxis));
+    axisV = normalize(cross(lightDirection, axisU));
+}
+
+float ProjectExtent(float3 extents, float3 axis)
+{
+    return dot(extents, abs(axis));
+}
+
+float3 SmoothPosition(
+    float3 target,
+    float4 previous,
+    float deltaTime,
+    float smoothTime,
+    float teleportDistance,
+    bool reset)
+{
+    if (reset || previous.w <= 0.0 || deltaTime <= 0.0 || smoothTime <= 1e-4)
+        return target;
+
+    float3 delta = target - previous.xyz;
+    if (teleportDistance > 0.0 && dot(delta, delta) > teleportDistance * teleportDistance)
+        return target;
+
+    float factor = 1.0 - exp(-deltaTime / smoothTime);
+    return lerp(previous.xyz, target, factor);
+}
+
+[numthreads(64, 1, 1)]
+void GenerateSamples(uint3 dispatchThreadId : SV_DispatchThreadID)
+{
+    uint instanceIndex = dispatchThreadId.x;
+    if (instanceIndex >= _MdtCharUnifiedShadowInstanceCapacity)
+        return;
+
+    CharUnifiedShadowGpuInput input = _MdtCharUnifiedShadowInputs[instanceIndex];
+    uint outputBase = instanceIndex * SAMPLE_COUNT;
+    uint controlFlags = (uint)round(input.control.x);
+    bool active = input.control.y > 0.5;
+    bool shouldUpdate = (controlFlags & 1u) != 0u;
+    bool reset = (controlFlags & 2u) != 0u;
+    uint activeCount = min((uint)round(input.boundsExtentsAndCount.w), SAMPLE_COUNT);
+
+    _MdtCharUnifiedShadowRanges[instanceIndex] = active && activeCount > 0u
+        ? uint4(outputBase, activeCount, RANGE_VALID, 0u)
+        : uint4(0u, 0u, 0u, 0u);
+
+    if (!active)
+    {
+        [unroll]
+        for (uint clearIndex = 0u; clearIndex < SAMPLE_COUNT; clearIndex++)
+            _MdtCharUnifiedShadowSamples[outputBase + clearIndex] = 0.0;
+        return;
+    }
+
+    if (!shouldUpdate)
+        return;
+
+    float3 lightDirection = normalize(input.lightDirectionAndDeltaTime.xyz);
+    float deltaTime = input.lightDirectionAndDeltaTime.w;
+    float lightBias = input.settings.x;
+    float extentScale = max(0.01, input.settings.y);
+    float smoothTime = input.settings.z;
+    float teleportDistance = input.settings.w;
+    bool useBoxProjection = input.boundsCenterAndMode.w > 0.5;
+
+    float3 axisU = 0.0;
+    float3 axisV = 0.0;
+    float extentU = 0.0;
+    float extentV = 0.0;
+    float3 boxAnchor = 0.0;
+    if (useBoxProjection)
+    {
+        BuildProjectionBasis(lightDirection, axisU, axisV);
+        float3 extents = input.boundsExtentsAndCount.xyz;
+        extentU = ProjectExtent(extents, axisU) * extentScale;
+        extentV = ProjectExtent(extents, axisV) * extentScale;
+        float halfDepth = ProjectExtent(extents, lightDirection);
+        boxAnchor = input.boundsCenterAndMode.xyz
+            + lightDirection * (halfDepth + lightBias);
+    }
+
+    [unroll]
+    for (uint sampleIndex = 0u; sampleIndex < SAMPLE_COUNT; sampleIndex++)
+    {
+        uint outputIndex = outputBase + sampleIndex;
+        if (sampleIndex >= activeCount)
+        {
+            _MdtCharUnifiedShadowSamples[outputIndex] = 0.0;
+            continue;
+        }
+
+        float3 target;
+        float weight;
+        if (useBoxProjection)
+        {
+            float2 offset = HALTON_SAMPLES[sampleIndex] * 2.0 - 1.0;
+            target = boxAnchor
+                + axisU * (offset.x * extentU)
+                + axisV * (offset.y * extentV);
+            weight = 1.0;
+        }
+        else
+        {
+            float4 anchor = LoadAnchorPosition(input, sampleIndex);
+            target = anchor.xyz + lightDirection * LoadAnchorBias(input, sampleIndex);
+            weight = anchor.w;
+        }
+
+        float4 previous = _MdtCharUnifiedShadowSamples[outputIndex];
+        float3 smoothed = SmoothPosition(
+            target,
+            previous,
+            deltaTime,
+            smoothTime,
+            teleportDistance,
+            reset);
+        _MdtCharUnifiedShadowSamples[outputIndex] = float4(smoothed, weight);
+    }
+}

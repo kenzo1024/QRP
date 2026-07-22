@@ -14,13 +14,16 @@ namespace Rendering.MatDataTransfer.Runtime
             List<ValidatedParamRequest> requests,
             ref ResolutionStats stats)
         {
-            BeginResolve(requests, ref stats);
-            if (requests != null)
+            using (MatDataTransferProfiling.ModuleResolver.Auto())
             {
-                for (int i = 0; i < requests.Count; i++)
-                    SelectWinner(requests[i], ref stats);
+                BeginResolve(requests, ref stats);
+                if (requests != null)
+                {
+                    for (int i = 0; i < requests.Count; i++)
+                        SelectWinner(requests[i], ref stats);
+                }
+                return BuildCommands(ref stats);
             }
-            return BuildCommands(ref stats);
         }
 
         internal IReadOnlyList<ParamWriteCommand> ResolveWithDiagnostics(
@@ -28,14 +31,17 @@ namespace Rendering.MatDataTransfer.Runtime
             List<ConflictDecision> conflictDecisions,
             ref ResolutionStats stats)
         {
-            BeginResolve(requests, ref stats);
-            conflictDecisions?.Clear();
-            if (requests != null)
+            using (MatDataTransferProfiling.ModuleResolver.Auto())
             {
-                for (int i = 0; i < requests.Count; i++)
-                    SelectWinnerWithDiagnostics(requests[i], conflictDecisions, ref stats);
+                BeginResolve(requests, ref stats);
+                conflictDecisions?.Clear();
+                if (requests != null)
+                {
+                    for (int i = 0; i < requests.Count; i++)
+                        SelectWinnerWithDiagnostics(requests[i], conflictDecisions, ref stats);
+                }
+                return BuildCommands(ref stats);
             }
-            return BuildCommands(ref stats);
         }
 
         private void BeginResolve(List<ValidatedParamRequest> requests, ref ResolutionStats stats)
@@ -59,7 +65,14 @@ namespace Rendering.MatDataTransfer.Runtime
             stats.OverriddenCount++;
             ValidatedParamRequest current = m_Winners[winnerIndex];
             if (IsStronger(request.Strength, current.Strength))
+            {
+                MatDataTransferLogging.RecordOverriddenSummary(current.Trace);
                 m_Winners[winnerIndex] = request;
+            }
+            else
+            {
+                MatDataTransferLogging.RecordOverriddenSummary(request.Trace);
+            }
         }
 
         private void SelectWinnerWithDiagnostics(
@@ -78,12 +91,18 @@ namespace Rendering.MatDataTransfer.Runtime
             ValidatedParamRequest current = m_Winners[winnerIndex];
             if (IsStronger(request.Strength, current.Strength))
             {
-                conflictDecisions?.Add(new ConflictDecision(current.RequestId, request.RequestId));
+                MatDataTransferLogging.RecordOverriddenSummary(current.Trace);
+                conflictDecisions?.Add(new ConflictDecision(
+                    current.DiagnosticIndex,
+                    request.DiagnosticIndex));
                 m_Winners[winnerIndex] = request;
             }
             else
             {
-                conflictDecisions?.Add(new ConflictDecision(request.RequestId, current.RequestId));
+                MatDataTransferLogging.RecordOverriddenSummary(request.Trace);
+                conflictDecisions?.Add(new ConflictDecision(
+                    request.DiagnosticIndex,
+                    current.DiagnosticIndex));
             }
         }
 
@@ -95,7 +114,9 @@ namespace Rendering.MatDataTransfer.Runtime
                 m_Commands.Add(new ParamWriteCommand(
                     winner.WriteTarget,
                     winner.Value,
-                    winner.RequestId));
+                    winner.RequestId,
+                    winner.Trace,
+                    winner.DiagnosticIndex));
             }
 
             stats.WinnerCount = m_Commands.Count;

@@ -25,7 +25,7 @@ namespace Rendering.MatDataTransfer.Runtime
                 identity,
                 writeConfig);
 
-            return SubmitPayload(ref payload);
+            return SubmitPayload(ref payload, binding, null, null);
         }
 
         internal static ParamSubmitTrace ForMaterial(
@@ -38,8 +38,147 @@ namespace Rendering.MatDataTransfer.Runtime
             ParamWriteLayer layer,
             int priority = 0)
         {
-            RendererMaterialBinding binding = ResolveTargetBinding(target, targetRenderer, materialSlot);
-            return Submit(target, semanticKey, value, binding, source, layer, priority);
+            using (MatDataTransferProfiling.ModuleSubmitter.Auto())
+            {
+                RendererMaterialBinding binding = ResolveTargetBinding(target, targetRenderer, materialSlot);
+                return Submit(target, semanticKey, value, binding, source, layer, priority);
+            }
+        }
+
+        internal static ParamBatchSubmitResult ForMaterialBatch(
+            MatDataTransferInstance target,
+            Renderer targetRenderer,
+            int materialSlot,
+            IReadOnlyList<ParamBatchWrite> writes,
+            MatDataTransferSubmitSource source,
+            ParamWriteLayer layer,
+            int priority = 0)
+        {
+            using (MatDataTransferProfiling.ModuleSubmitter.Auto())
+            {
+                return ForMaterialBatchProfiled(
+                    target,
+                    targetRenderer,
+                    materialSlot,
+                    writes,
+                    source,
+                    layer,
+                    priority);
+            }
+        }
+
+        private static ParamBatchSubmitResult ForMaterialBatchProfiled(
+            MatDataTransferInstance target,
+            Renderer targetRenderer,
+            int materialSlot,
+            IReadOnlyList<ParamBatchWrite> writes,
+            MatDataTransferSubmitSource source,
+            ParamWriteLayer layer,
+            int priority)
+        {
+            int totalCount = writes != null ? writes.Count : 0;
+            if (totalCount == 0)
+                return new ParamBatchSubmitResult(0, 0, 0, -1, ParamWriteResultCode.None);
+
+            if (!TryPrepareBatchContext(
+                    target,
+                    targetRenderer,
+                    materialSlot,
+                    source,
+                    out MatDataTransferFeature feature,
+                    out RendererMaterialBinding binding,
+                    out ShaderPropertyCatalog catalog,
+                    out ParamWriteResultCode commonError))
+            {
+                if (MatDataTransferLogging.Instance.IsEnabled)
+                    RecordRejectedBatch(target, binding, writes, source, layer, priority, commonError);
+
+                return new ParamBatchSubmitResult(
+                    totalCount,
+                    0,
+                    totalCount,
+                    0,
+                    commonError);
+            }
+
+            int acceptedCount = 0;
+            int rejectedCount = 0;
+            int firstRejectedIndex = -1;
+            ParamWriteResultCode firstErrorCode = ParamWriteResultCode.None;
+            bool loggingEnabled = MatDataTransferLogging.Instance.IsEnabled;
+            for (int i = 0; i < totalCount; i++)
+            {
+                ParamBatchWrite write = writes[i];
+                int sequence = MatDataTransferSubmitSequence.Next(out int submitFrameIndex);
+                if (!TryValidateBatchItem(
+                        catalog,
+                        write,
+                        out CatalogProperty property,
+                        out ParamWriteResultCode itemError))
+                {
+                    rejectedCount++;
+                    if (firstRejectedIndex < 0)
+                    {
+                        firstRejectedIndex = i;
+                        firstErrorCode = itemError;
+                    }
+
+                    if (loggingEnabled)
+                    {
+                        RecordRejectedBatchItem(
+                            target,
+                            binding,
+                            write,
+                            source,
+                            layer,
+                            priority,
+                            submitFrameIndex,
+                            sequence,
+                            itemError);
+                    }
+                    continue;
+                }
+
+                if (loggingEnabled)
+                {
+                    EnqueueLoggedBatchItem(
+                        feature,
+                        target,
+                        binding,
+                        catalog,
+                        property,
+                        write,
+                        source,
+                        layer,
+                        priority,
+                        submitFrameIndex,
+                        sequence);
+                }
+                else
+                {
+                    feature.EnqueueValidatedBatchItem(
+                        target,
+                        binding,
+                        write.Value,
+                        layer,
+                        priority,
+                        submitFrameIndex,
+                        sequence,
+                        ParamBindingResolution.ResolvePropertyId(property.PropertyInfo.PropertyName));
+                }
+
+                acceptedCount++;
+            }
+
+            if (acceptedCount > 0)
+                MatDataTransferRuntime.RequestEditorUpdate();
+
+            return new ParamBatchSubmitResult(
+                totalCount,
+                acceptedCount,
+                rejectedCount,
+                firstRejectedIndex,
+                firstErrorCode);
         }
 
         internal static ParamSubmitTrace Submit(
@@ -51,7 +190,7 @@ namespace Rendering.MatDataTransfer.Runtime
             ParamWriteLayer layer,
             int priority = 0)
         {
-            using (MatDataTransferProfiling.SubmitTotal.Auto())
+            using (MatDataTransferProfiling.ModuleSubmitter.Auto())
                 return SubmitScope(target, semanticKey, value, scope, source, layer, priority);
         }
 
@@ -65,9 +204,12 @@ namespace Rendering.MatDataTransfer.Runtime
             int priority)
         {
             ParamSubmitTrace rootTrace = new ParamSubmitTrace();
-            rootTrace.AddStep(ParamSubmitStep.Submitted(
-                "Scope.Begin",
-                "Scope submit created."));
+            MatDataTransferLogging.RecordTraceStep(
+                rootTrace,
+                ParamSubmitStage.ScopeBegin,
+                ParamWriteStatus.Submitted,
+                ParamWriteResultCode.None,
+                "Scope submit created.");
 
             bool isValid;
             using (MatDataTransferProfiling.SubmitValidate.Auto())
@@ -87,26 +229,34 @@ namespace Rendering.MatDataTransfer.Runtime
                     if (!IsBindingInsideScope(binding, scope))
                         continue;
 
-                    if (!BindingSupportsKey(binding, semanticKey, feature))
+                    if (!TryResolveBindingProperty(
+                            binding,
+                            semanticKey,
+                            feature,
+                            out ShaderPropertyCatalog catalog,
+                            out CatalogProperty property))
                     {
                         rootTrace.AddSkipped();
                         continue;
                     }
 
-                    ParamSubmitTrace childTrace = Submit(
+                    ParamSubmitTrace childTrace = SubmitResolved(
                         target,
                         semanticKey,
                         value,
                         binding,
+                        catalog,
+                        property,
                         source,
                         layer,
                         priority);
                     rootTrace.AddChild(childTrace);
                 }
 
-                rootTrace.AddStep(ParamSubmitStep.Queued(
-                    "Scope.Expand",
-                    $"Scope expanded: {rootTrace.Children.Count} submitted, {rootTrace.SkippedCount} skipped."));
+                MatDataTransferLogging.RecordScopeExpanded(
+                    rootTrace,
+                    rootTrace.Children.Count,
+                    rootTrace.SkippedCount);
             }
             return rootTrace;
         }
@@ -148,21 +298,56 @@ namespace Rendering.MatDataTransfer.Runtime
                 priority);
         }
 
-        private static ParamSubmitTrace SubmitPayload(ref ParamTransferPayload payload)
+        private static ParamSubmitTrace SubmitResolved(
+            MatDataTransferInstance target,
+            string semanticKey,
+            ParamValue value,
+            RendererMaterialBinding binding,
+            ShaderPropertyCatalog catalog,
+            CatalogProperty property,
+            MatDataTransferSubmitSource source,
+            ParamWriteLayer layer,
+            int priority)
         {
-            using (MatDataTransferProfiling.SubmitTotal.Auto())
-                return SubmitPayloadProfiled(ref payload);
+            ParamRequestIdentity identity = new ParamRequestIdentity(
+                target,
+                source,
+                semanticKey,
+                value,
+                binding);
+            ParamTransferPayload payload = new ParamTransferPayload(
+                identity,
+                new ParamWriteConfig(layer, priority));
+            return SubmitPayload(ref payload, binding, catalog, property);
         }
 
-        private static ParamSubmitTrace SubmitPayloadProfiled(ref ParamTransferPayload payload)
+        private static ParamSubmitTrace SubmitPayload(
+            ref ParamTransferPayload payload,
+            RendererMaterialBinding knownBinding,
+            ShaderPropertyCatalog knownCatalog,
+            CatalogProperty knownProperty)
+        {
+            return SubmitPayloadProfiled(
+                ref payload,
+                knownBinding,
+                knownCatalog,
+                knownProperty);
+        }
+
+        private static ParamSubmitTrace SubmitPayloadProfiled(
+            ref ParamTransferPayload payload,
+            RendererMaterialBinding knownBinding,
+            ShaderPropertyCatalog knownCatalog,
+            CatalogProperty knownProperty)
         {
             payload.Sequence = MatDataTransferSubmitSequence.Next(out int submitFrameIndex);
             payload.SubmitFrameIndex = submitFrameIndex;
-            MatDataTransferLogging.AppendSubmitStep(
+            MatDataTransferLogging.RecordSubmitStep(
                 ref payload,
-                ParamSubmitStep.Submitted(
-                    "Submit.Begin",
-                    "Submit payload created."));
+                ParamSubmitStage.SubmitBegin,
+                ParamWriteStatus.Submitted,
+                ParamWriteResultCode.None,
+                "Submit payload created.");
 
             MatDataTransferFeature feature = MatDataTransferFeature.Instance;
 
@@ -174,6 +359,9 @@ namespace Rendering.MatDataTransfer.Runtime
                 isValid = TryValidate(
                     ref payload,
                     feature,
+                    knownBinding,
+                    knownCatalog,
+                    knownProperty,
                     out binding,
                     out catalog,
                     out property);
@@ -192,21 +380,22 @@ namespace Rendering.MatDataTransfer.Runtime
                 binding.ShaderName,
                 catalog != null ? catalog.name : string.Empty);
             feature.EnqueueValidatedRequest(ref payload, binding, bindingResolution);
-
-            MatDataTransferRuntime.RequestEditorUpdate();
             return payload.Trace;
         }
 
         private static bool TryValidate(
             ref ParamTransferPayload payload,
             MatDataTransferFeature feature,
+            RendererMaterialBinding knownBinding,
+            ShaderPropertyCatalog knownCatalog,
+            CatalogProperty knownProperty,
             out RendererMaterialBinding resolvedBinding,
             out ShaderPropertyCatalog resolvedCatalog,
             out CatalogProperty resolvedProperty)
         {
-            resolvedBinding = null;
-            resolvedCatalog = null;
-            resolvedProperty = null;
+            resolvedBinding = knownBinding;
+            resolvedCatalog = knownCatalog;
+            resolvedProperty = knownProperty;
 
             if (payload.Identity.Target == null)
                 return RejectSubmit(
@@ -257,20 +446,21 @@ namespace Rendering.MatDataTransfer.Runtime
                     ParamWriteResultCode.ProviderUnavailable,
                     "Material parameter transfer pipeline is unavailable.");
 
-            resolvedBinding = payload.Identity.Target.QueryBinding(payload.Identity.Binding);
             if (resolvedBinding == null)
                 return RejectSubmit(
                     ref payload,
                     ParamWriteResultCode.BindingMissing,
                     "No renderer/material binding matches the submit target.");
 
-            if (!TryFindCatalogProperty(
-                resolvedBinding,
-                payload.Identity.SemanticKey,
-                feature,
-                out resolvedCatalog,
-                out resolvedProperty,
-                out bool hasCatalog))
+            bool hasCatalog = resolvedCatalog != null;
+            if (resolvedProperty == null
+                && !TryFindCatalogProperty(
+                    resolvedBinding,
+                    payload.Identity.SemanticKey,
+                    feature,
+                    out resolvedCatalog,
+                    out resolvedProperty,
+                    out hasCatalog))
             {
                 ParamWriteResultCode code = hasCatalog
                     ? ParamWriteResultCode.PropertyMissing
@@ -296,12 +486,12 @@ namespace Rendering.MatDataTransfer.Runtime
             ParamWriteResultCode code,
             string message)
         {
-            MatDataTransferLogging.AppendSubmitStep(
+            MatDataTransferLogging.RecordSubmitStep(
                 ref payload,
-                ParamSubmitStep.Rejected(
-                    "Submit.Validate",
-                    code,
-                    message));
+                ParamSubmitStage.SubmitValidate,
+                ParamWriteStatus.Rejected,
+                code,
+                message);
             return false;
         }
 
@@ -341,10 +531,12 @@ namespace Rendering.MatDataTransfer.Runtime
             ParamWriteResultCode code,
             string message)
         {
-            trace?.AddStep(ParamSubmitStep.Rejected(
-                "Scope.Validate",
+            MatDataTransferLogging.RecordTraceStep(
+                trace,
+                ParamSubmitStage.ScopeValidate,
+                ParamWriteStatus.Rejected,
                 code,
-                message));
+                message);
             return false;
         }
 
@@ -359,11 +551,15 @@ namespace Rendering.MatDataTransfer.Runtime
             return string.Equals(binding.ShaderName, scope.ShaderName, System.StringComparison.Ordinal);
         }
 
-        private static bool BindingSupportsKey(
+        private static bool TryResolveBindingProperty(
             RendererMaterialBinding binding,
             string semanticKey,
-            MatDataTransferFeature feature)
+            MatDataTransferFeature feature,
+            out ShaderPropertyCatalog catalog,
+            out CatalogProperty property)
         {
+            catalog = null;
+            property = null;
             if (binding == null || feature == null)
                 return false;
 
@@ -371,8 +567,8 @@ namespace Rendering.MatDataTransfer.Runtime
                 binding,
                 semanticKey,
                 feature,
-                out _,
-                out _,
+                out catalog,
+                out property,
                 out _);
         }
 
@@ -391,13 +587,180 @@ namespace Rendering.MatDataTransfer.Runtime
             if (binding == null || string.IsNullOrEmpty(binding.ShaderName))
                 return false;
 
-            if (feature.TryGetCatalogForShader(binding.ShaderName, out catalog))
-                hasCatalog = true;
+            if (!feature.TryGetCatalogForShader(binding.ShaderName, out catalog))
+                return false;
 
-            if (feature.TryGetProperty(binding.ShaderName, semanticKey, out catalog, out property))
-                return property?.PropertyInfo != null;
+            hasCatalog = true;
+            if (catalog.TryGetProperty(semanticKey, out property))
+                return property?.PropertyInfo != null && property.Status == CatalogPropertyStatus.Ok;
 
             return false;
+        }
+
+        private static bool TryPrepareBatchContext(
+            MatDataTransferInstance target,
+            Renderer targetRenderer,
+            int materialSlot,
+            MatDataTransferSubmitSource source,
+            out MatDataTransferFeature feature,
+            out RendererMaterialBinding binding,
+            out ShaderPropertyCatalog catalog,
+            out ParamWriteResultCode errorCode)
+        {
+            feature = MatDataTransferFeature.Instance;
+            binding = null;
+            catalog = null;
+            errorCode = ParamWriteResultCode.None;
+
+            if (target == null || !target.IsReady)
+                errorCode = ParamWriteResultCode.InstanceMissing;
+            else if (string.IsNullOrWhiteSpace(source.Id))
+                errorCode = ParamWriteResultCode.SourceIdMissing;
+            else if (targetRenderer == null || materialSlot < 0)
+                errorCode = ParamWriteResultCode.RendererOrMaterialSlotMissing;
+            else if (feature == null)
+                errorCode = ParamWriteResultCode.FeatureMissing;
+            else if (!feature.CanAcceptRequests)
+                errorCode = ParamWriteResultCode.ProviderUnavailable;
+            else if ((binding = target.QueryBinding(targetRenderer, materialSlot)) == null)
+                errorCode = ParamWriteResultCode.BindingMissing;
+            else if (!feature.TryGetCatalogForShader(binding.ShaderName, out catalog))
+                errorCode = ParamWriteResultCode.BindingMissing;
+
+            return errorCode == ParamWriteResultCode.None;
+        }
+
+        private static bool TryValidateBatchItem(
+            ShaderPropertyCatalog catalog,
+            ParamBatchWrite write,
+            out CatalogProperty property,
+            out ParamWriteResultCode errorCode)
+        {
+            property = null;
+            errorCode = ParamWriteResultCode.None;
+            if (string.IsNullOrWhiteSpace(write.SemanticKey))
+                errorCode = ParamWriteResultCode.SemanticKeyMissing;
+            else if (catalog == null
+                || !catalog.TryGetProperty(write.SemanticKey, out property)
+                || property?.PropertyInfo == null
+                || property.Status != CatalogPropertyStatus.Ok)
+                errorCode = ParamWriteResultCode.PropertyMissing;
+            else if (property.PropertyInfo.ValueType != write.Value.Type)
+                errorCode = ParamWriteResultCode.TypeMismatch;
+
+            return errorCode == ParamWriteResultCode.None;
+        }
+
+        private static void EnqueueLoggedBatchItem(
+            MatDataTransferFeature feature,
+            MatDataTransferInstance target,
+            RendererMaterialBinding binding,
+            ShaderPropertyCatalog catalog,
+            CatalogProperty property,
+            ParamBatchWrite write,
+            MatDataTransferSubmitSource source,
+            ParamWriteLayer layer,
+            int priority,
+            int submitFrameIndex,
+            int sequence)
+        {
+            ParamTransferPayload payload = CreateBatchPayload(
+                target,
+                binding,
+                property.SuggestedSemanticKey,
+                write.Value,
+                source,
+                layer,
+                priority,
+                submitFrameIndex,
+                sequence);
+            MatDataTransferLogging.RecordSubmitStep(
+                ref payload,
+                ParamSubmitStage.SubmitBegin,
+                ParamWriteStatus.Submitted,
+                ParamWriteResultCode.None,
+                "Submit payload created.");
+            ParamBindingResolution resolution = ParamBindingResolution.FromCatalog(
+                property,
+                property.SuggestedSemanticKey,
+                binding.ShaderName,
+                catalog != null ? catalog.name : string.Empty);
+            feature.EnqueueValidatedRequest(ref payload, binding, resolution);
+        }
+
+        private static void RecordRejectedBatchItem(
+            MatDataTransferInstance target,
+            RendererMaterialBinding binding,
+            ParamBatchWrite write,
+            MatDataTransferSubmitSource source,
+            ParamWriteLayer layer,
+            int priority,
+            int submitFrameIndex,
+            int sequence,
+            ParamWriteResultCode errorCode)
+        {
+            ParamTransferPayload payload = CreateBatchPayload(
+                target,
+                binding,
+                write.SemanticKey,
+                write.Value,
+                source,
+                layer,
+                priority,
+                submitFrameIndex,
+                sequence);
+            MatDataTransferLogging.RecordSubmitStep(
+                ref payload,
+                ParamSubmitStage.SubmitBegin,
+                ParamWriteStatus.Submitted,
+                ParamWriteResultCode.None,
+                "Submit payload created.");
+            RejectSubmit(ref payload, errorCode, errorCode.ToString());
+            MatDataTransferLogging.CaptureSubmitSnapshot(ref payload);
+        }
+
+        private static void RecordRejectedBatch(
+            MatDataTransferInstance target,
+            RendererMaterialBinding binding,
+            IReadOnlyList<ParamBatchWrite> writes,
+            MatDataTransferSubmitSource source,
+            ParamWriteLayer layer,
+            int priority,
+            ParamWriteResultCode errorCode)
+        {
+            for (int i = 0; i < writes.Count; i++)
+            {
+                int sequence = MatDataTransferSubmitSequence.Next(out int submitFrameIndex);
+                RecordRejectedBatchItem(
+                    target,
+                    binding,
+                    writes[i],
+                    source,
+                    layer,
+                    priority,
+                    submitFrameIndex,
+                    sequence,
+                    errorCode);
+            }
+        }
+
+        private static ParamTransferPayload CreateBatchPayload(
+            MatDataTransferInstance target,
+            RendererMaterialBinding binding,
+            string semanticKey,
+            ParamValue value,
+            MatDataTransferSubmitSource source,
+            ParamWriteLayer layer,
+            int priority,
+            int submitFrameIndex,
+            int sequence)
+        {
+            ParamTransferPayload payload = new ParamTransferPayload(
+                new ParamRequestIdentity(target, source, semanticKey, value, binding),
+                new ParamWriteConfig(layer, priority));
+            payload.SubmitFrameIndex = submitFrameIndex;
+            payload.Sequence = sequence;
+            return payload;
         }
 
         private static RendererMaterialBinding ResolveTargetBinding(

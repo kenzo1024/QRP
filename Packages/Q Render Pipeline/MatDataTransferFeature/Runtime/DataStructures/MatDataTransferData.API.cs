@@ -5,6 +5,53 @@ using UnityEngine;
 
 namespace Rendering.MatDataTransfer.Runtime
 {
+    public readonly struct ParamBatchWrite
+    {
+        public readonly string SemanticKey;
+        public readonly ParamValue Value;
+
+        public ParamBatchWrite(string semanticKey, ParamValue value)
+        {
+            SemanticKey = semanticKey;
+            Value = value;
+        }
+    }
+
+    public readonly struct ParamBatchSubmitResult
+    {
+        public readonly int TotalCount;
+        public readonly int AcceptedCount;
+        public readonly int RejectedCount;
+        public readonly int FirstRejectedIndex;
+        public readonly ParamWriteResultCode FirstErrorCode;
+
+        public ParamBatchSubmitResult(
+            int totalCount,
+            int acceptedCount,
+            int rejectedCount,
+            int firstRejectedIndex,
+            ParamWriteResultCode firstErrorCode)
+        {
+            TotalCount = totalCount;
+            AcceptedCount = acceptedCount;
+            RejectedCount = rejectedCount;
+            FirstRejectedIndex = firstRejectedIndex;
+            FirstErrorCode = firstErrorCode;
+        }
+    }
+
+    internal enum ParamSubmitStage
+    {
+        ScopeBegin,
+        ScopeValidate,
+        ScopeExpand,
+        SubmitBegin,
+        SubmitValidate,
+        SubmitQueue,
+        ResolveConflict,
+        WriteApply
+    }
+
     internal struct ParamTransferPayload
     {
         public ParamRequestIdentity Identity;
@@ -219,24 +266,31 @@ namespace Rendering.MatDataTransfer.Runtime
     [Serializable]
     public sealed class ParamSubmitTrace
     {
-        public readonly List<ParamSubmitStep> Steps =
-            new List<ParamSubmitStep>();
-        public readonly List<ParamSubmitTrace> Children =
-            new List<ParamSubmitTrace>();
+        private List<ParamSubmitStep> m_Steps;
+        private List<ParamSubmitTrace> m_Children;
+        private ParamWriteStatus m_Status = ParamWriteStatus.Submitted;
+        private ParamWriteResultCode m_Code = ParamWriteResultCode.None;
+        private string m_Message = string.Empty;
+        private bool m_HasResult;
 
-        public ParamSubmitStep Current => Steps.Count > 0 ? Steps[Steps.Count - 1] : null;
-        public bool IsBatch => IsBatchRoot || Children.Count > 0 || SkippedCount > 0;
-        public bool IsAccepted => IsBatch ? AcceptedCount > 0 : Current != null && Current.IsAccepted;
-        public bool IsApplied => IsBatch ? AppliedCount > 0 : Current != null && Current.IsApplied;
-        public ParamWriteStatus Status => Current != null ? Current.Status : ParamWriteStatus.Submitted;
-        public ParamWriteResultCode Code => Current != null ? Current.Code : ParamWriteResultCode.None;
-        public string Message => Current != null ? Current.Message : string.Empty;
+        public List<ParamSubmitStep> Steps =>
+            m_Steps ??= new List<ParamSubmitStep>();
+        public List<ParamSubmitTrace> Children =>
+            m_Children ??= new List<ParamSubmitTrace>();
+        public ParamSubmitStep Current =>
+            m_Steps != null && m_Steps.Count > 0 ? m_Steps[m_Steps.Count - 1] : null;
+        public bool IsBatch => IsBatchRoot || (m_Children != null && m_Children.Count > 0) || SkippedCount > 0;
+        public bool IsAccepted => IsBatch ? AcceptedCount > 0 : m_HasResult && m_Status != ParamWriteStatus.Rejected;
+        public bool IsApplied => IsBatch ? AppliedCount > 0 : m_HasResult && m_Status == ParamWriteStatus.Applied;
+        public ParamWriteStatus Status => m_Status;
+        public ParamWriteResultCode Code => m_Code;
+        public string Message => m_Message;
         public bool IsBatchRoot { get; private set; }
         public int SkippedCount { get; private set; }
-        public int TotalCount => IsBatch ? Children.Count + SkippedCount : 1;
+        public int TotalCount => IsBatch ? GetChildCount() + SkippedCount : 1;
         public int AcceptedCount => CountChildren(true, false);
         public int AppliedCount => CountChildren(false, true);
-        public int RejectedCount => IsBatch ? CountRejectedChildren() : (Current != null && !IsAccepted ? 1 : 0);
+        public int RejectedCount => IsBatch ? CountRejectedChildren() : (m_HasResult && !IsAccepted ? 1 : 0);
 
         public ParamSubmitTrace()
         {
@@ -245,8 +299,11 @@ namespace Rendering.MatDataTransfer.Runtime
 
         public void AddStep(ParamSubmitStep step)
         {
-            if (step != null)
-                Steps.Add(step);
+            if (step == null)
+                return;
+
+            UpdateSummary(step.Status, step.Code, step.Message);
+            Steps.Add(step);
         }
 
         public void AddChild(ParamSubmitTrace trace)
@@ -266,6 +323,17 @@ namespace Rendering.MatDataTransfer.Runtime
                 SkippedCount += count;
         }
 
+        internal void UpdateSummary(
+            ParamWriteStatus status,
+            ParamWriteResultCode code,
+            string message = null)
+        {
+            m_Status = status;
+            m_Code = code;
+            m_Message = message ?? string.Empty;
+            m_HasResult = true;
+        }
+
         public override string ToString()
         {
             if (IsBatch)
@@ -281,10 +349,13 @@ namespace Rendering.MatDataTransfer.Runtime
 
         private int CountChildren(bool accepted, bool applied)
         {
+            if (m_Children == null)
+                return 0;
+
             int count = 0;
-            for (int i = 0; i < Children.Count; i++)
+            for (int i = 0; i < m_Children.Count; i++)
             {
-                ParamSubmitTrace child = Children[i];
+                ParamSubmitTrace child = m_Children[i];
                 if (child == null)
                     continue;
 
@@ -299,15 +370,23 @@ namespace Rendering.MatDataTransfer.Runtime
 
         private int CountRejectedChildren()
         {
+            if (m_Children == null)
+                return 0;
+
             int count = 0;
-            for (int i = 0; i < Children.Count; i++)
+            for (int i = 0; i < m_Children.Count; i++)
             {
-                ParamSubmitTrace child = Children[i];
+                ParamSubmitTrace child = m_Children[i];
                 if (child != null && !child.IsAccepted)
                     count++;
             }
 
             return count;
+        }
+
+        private int GetChildCount()
+        {
+            return m_Children != null ? m_Children.Count : 0;
         }
     }
 }

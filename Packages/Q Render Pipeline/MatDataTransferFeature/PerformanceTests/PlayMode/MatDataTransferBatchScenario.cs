@@ -6,6 +6,7 @@ namespace Rendering.MatDataTransfer.PerformanceTests
     {
         None,
         ForMaterial,
+        ForMaterialBatch,
         ForInstance
     }
 
@@ -13,6 +14,8 @@ namespace Rendering.MatDataTransfer.PerformanceTests
     {
         UrpBaseline,
         RendererBaseline,
+        DirectMaterialSet,
+        DirectPropertyBlock,
         InstanceIdle,
         Submission
     }
@@ -113,6 +116,11 @@ namespace Rendering.MatDataTransfer.PerformanceTests
         public static MatDataTransferBatchScenario B09_Logging()
         {
             return Pressure("B09", "Logging", 300, 12, 3, MatDataTransferBatchApiMode.ForMaterial, true);
+        }
+
+        public static MatDataTransferBatchScenario B10_BatchMainRealLoad()
+        {
+            return Baseline("B10", "BatchMainRealLoad", 300, 12, 3, MatDataTransferBatchApiMode.ForMaterialBatch, false);
         }
 
         public static MatDataTransferBatchScenario Smoke()

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace Rendering.MatDataTransfer.Runtime
@@ -20,6 +21,25 @@ namespace Rendering.MatDataTransfer.Runtime
                 value,
                 targetRenderer,
                 materialSlot,
+                source,
+                layer,
+                priority);
+        }
+
+        public static ParamBatchSubmitResult ForMaterialBatch(
+            MatDataTransferInstance target,
+            Renderer targetRenderer,
+            int materialSlot,
+            IReadOnlyList<ParamBatchWrite> writes,
+            MatDataTransferSubmitSource source,
+            ParamWriteLayer layer,
+            int priority = 0)
+        {
+            return MaterialParameterSubmitter.ForMaterialBatch(
+                target,
+                targetRenderer,
+                materialSlot,
+                writes,
                 source,
                 layer,
                 priority);

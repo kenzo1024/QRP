@@ -5,10 +5,24 @@ namespace Rendering.MatDataTransfer.Runtime
 {
     internal sealed class MaterialParameterWriter
     {
+#if UNITY_INCLUDE_TESTS
+        private static int s_TestMaterialArrayReadCount;
+#endif
+
         private readonly Dictionary<long, PropertyBlockEntry> m_PropertyBlockEntries =
             new Dictionary<long, PropertyBlockEntry>();
+        private readonly Dictionary<long, FrameWriteTarget> m_FrameWriteTargets =
+            new Dictionary<long, FrameWriteTarget>();
         private readonly List<PropertyBlockEntry> m_PendingPropertyBlocks = new List<PropertyBlockEntry>();
         private ParamWriteMethod m_WriteMode = ParamWriteMethod.MaterialInstance;
+        private WriterStats m_LastStats;
+
+        internal WriterStats LastStats => m_LastStats;
+
+        internal void ResetStats()
+        {
+            m_LastStats.Reset();
+        }
 
         internal void SetWriteMode(ParamWriteMethod writeMode)
         {
@@ -21,10 +35,31 @@ namespace Rendering.MatDataTransfer.Runtime
             m_WriteMode = writeMode;
         }
 
+#if UNITY_INCLUDE_TESTS
+        internal static void ResetMaterialArrayReadCountForTests()
+        {
+            s_TestMaterialArrayReadCount = 0;
+        }
+
+        internal static int GetMaterialArrayReadCountForTests()
+        {
+            return s_TestMaterialArrayReadCount;
+        }
+#endif
+
         internal void Apply(
             IReadOnlyList<ParamWriteCommand> commands,
             IReadOnlyList<RequestDiagnosticContext> diagnostics)
         {
+            using (MatDataTransferProfiling.ModuleWriter.Auto())
+                ApplyProfiled(commands, diagnostics);
+        }
+
+        private void ApplyProfiled(
+            IReadOnlyList<ParamWriteCommand> commands,
+            IReadOnlyList<RequestDiagnosticContext> diagnostics)
+        {
+            ResetStats();
             if (commands == null)
                 return;
 
@@ -33,40 +68,17 @@ namespace Rendering.MatDataTransfer.Runtime
             {
                 ParamWriteCommand command = commands[i];
                 ParamWriteMethod writeMethod = Apply(command, out string failureReason);
-                ParamSubmitStep step = writeMethod == ParamWriteMethod.None
-                    ? ParamSubmitStep.WriterFailed("Write.Apply", failureReason)
-                    : ParamSubmitStep.Applied("Write.Apply", "Write applied.");
-
-                if (!TryGetDiagnostic(command.RequestId, diagnostics, out RequestDiagnosticContext diagnostic))
-                    continue;
-
-                ParamTransferPayload payload = diagnostic.Payload;
-                MatDataTransferLogging.AppendSubmitStep(
-                    ref payload,
-                    step);
-                MatDataTransferLogging.CaptureWriteSnapshot(
-                    ref payload,
-                    diagnostic.BindingResolution,
+                m_LastStats.Add(writeMethod);
+                MatDataTransferLogging.RecordWrite(
+                    command.Trace,
+                    command.DiagnosticIndex,
+                    diagnostics,
                     command.Target.Renderer,
-                    writeMethod);
+                    writeMethod,
+                    failureReason);
             }
 
             FlushPropertyBlocks();
-        }
-
-        private static bool TryGetDiagnostic(
-            int requestId,
-            IReadOnlyList<RequestDiagnosticContext> diagnostics,
-            out RequestDiagnosticContext diagnostic)
-        {
-            if (diagnostics != null && requestId >= 0 && requestId < diagnostics.Count)
-            {
-                diagnostic = diagnostics[requestId];
-                return true;
-            }
-
-            diagnostic = default;
-            return false;
         }
 
         internal void ClearWrittenState()
@@ -76,11 +88,13 @@ namespace Rendering.MatDataTransfer.Runtime
 
             m_PropertyBlockEntries.Clear();
             m_PendingPropertyBlocks.Clear();
+            m_FrameWriteTargets.Clear();
         }
 
         private void BeginFrame()
         {
             m_PendingPropertyBlocks.Clear();
+            m_FrameWriteTargets.Clear();
         }
 
         private ParamWriteMethod Apply(ParamWriteCommand command, out string failureReason)
@@ -124,6 +138,10 @@ namespace Rendering.MatDataTransfer.Runtime
             ParamWriteTarget target,
             out string failureReason)
         {
+            if (!TryGetFrameMaterial(target, true, out Material material, out failureReason)
+                || !TryValidateMaterialProperty(target, material, out failureReason))
+                return false;
+
             if (!TryGetPropertyBlock(target, out MaterialPropertyBlock block, out failureReason))
                 return false;
 
@@ -132,13 +150,14 @@ namespace Rendering.MatDataTransfer.Runtime
             return true;
         }
 
-        private static bool TryApplyMaterial(
+        private bool TryApplyMaterial(
             ParamWriteCommand command,
             ParamWriteTarget target,
             bool shared,
             out string failureReason)
         {
-            if (!TryGetMaterial(target, shared, out Material material, out failureReason))
+            if (!TryGetFrameMaterial(target, shared, out Material material, out failureReason)
+                || !TryValidateMaterialProperty(target, material, out failureReason))
                 return false;
 
             using (MatDataTransferProfiling.PipelineWriteSetValue.Auto())
@@ -167,8 +186,7 @@ namespace Rendering.MatDataTransfer.Runtime
             }
 
             target = command.Target;
-
-            return TryGetMaterial(target, true, out _, out failureReason);
+            return true;
         }
 
         private bool TryGetPropertyBlock(
@@ -199,20 +217,40 @@ namespace Rendering.MatDataTransfer.Runtime
             return true;
         }
 
-        private static bool TryGetMaterial(
+        private bool TryGetFrameMaterial(
             ParamWriteTarget target,
             bool shared,
             out Material material,
             out string failureReason)
         {
+            long key = FrameWriteTarget.GetLookupKey(
+                target.Renderer.GetInstanceID(),
+                target.MaterialSlot);
+            if (m_FrameWriteTargets.TryGetValue(key, out FrameWriteTarget cached))
+            {
+                material = cached.Material;
+                failureReason = cached.FailureReason;
+                return cached.IsValid;
+            }
+
             material = ResolveMaterial(target.Renderer, target.MaterialSlot, shared);
             if (material == null)
             {
                 failureReason = $"Write target material is missing at slot {target.MaterialSlot}.";
+                m_FrameWriteTargets.Add(key, FrameWriteTarget.Failed(failureReason));
                 return false;
             }
 
-            return TryValidateMaterialProperty(target, material, out failureReason);
+            if (material.shader == null)
+            {
+                failureReason = $"Write target material '{material.name}' has no shader.";
+                m_FrameWriteTargets.Add(key, FrameWriteTarget.Failed(failureReason));
+                return false;
+            }
+
+            failureReason = string.Empty;
+            m_FrameWriteTargets.Add(key, FrameWriteTarget.Valid(material));
+            return true;
         }
 
         private static bool TryValidateMaterialProperty(
@@ -242,6 +280,9 @@ namespace Rendering.MatDataTransfer.Runtime
             using (MatDataTransferProfiling.PipelineWriteResolveMaterial.Auto())
             {
                 MatDataTransferProfiling.AddMaterialArrayRead();
+#if UNITY_INCLUDE_TESTS
+                s_TestMaterialArrayReadCount++;
+#endif
                 Material[] materials = shared ? renderer.sharedMaterials : renderer.materials;
                 if (materials == null || materialSlot < 0 || materialSlot >= materials.Length)
                     return null;
@@ -319,7 +360,7 @@ namespace Rendering.MatDataTransfer.Runtime
 
             public static long GetLookupKey(int rendererId, int materialSlot)
             {
-                return ((long)rendererId << 32) ^ (uint)materialSlot;
+                return FrameWriteTarget.GetLookupKey(rendererId, materialSlot);
             }
 
             public void UpdateRenderer(Renderer renderer)
@@ -344,6 +385,35 @@ namespace Rendering.MatDataTransfer.Runtime
             {
                 if (m_Renderer != null)
                     m_Renderer.SetPropertyBlock(null, MaterialSlot);
+            }
+        }
+
+        private readonly struct FrameWriteTarget
+        {
+            public readonly Material Material;
+            public readonly string FailureReason;
+            public readonly bool IsValid;
+
+            private FrameWriteTarget(Material material, string failureReason, bool isValid)
+            {
+                Material = material;
+                FailureReason = failureReason;
+                IsValid = isValid;
+            }
+
+            public static FrameWriteTarget Valid(Material material)
+            {
+                return new FrameWriteTarget(material, string.Empty, true);
+            }
+
+            public static FrameWriteTarget Failed(string failureReason)
+            {
+                return new FrameWriteTarget(null, failureReason ?? string.Empty, false);
+            }
+
+            public static long GetLookupKey(int rendererId, int materialSlot)
+            {
+                return ((long)rendererId << 32) ^ (uint)materialSlot;
             }
         }
     }

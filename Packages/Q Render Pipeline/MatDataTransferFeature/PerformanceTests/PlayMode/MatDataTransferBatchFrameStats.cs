@@ -4,6 +4,7 @@ namespace Rendering.MatDataTransfer.PerformanceTests
     {
         public MatDataTransferBatchPhase Phase;
         public MatDataTransferBatchPipelineMode PipelineMode;
+        public bool IsFirstFrameSample;
         public int FrameIndex;
         public double FrameMilliseconds;
         public long GcAllocatedBytes;
@@ -19,13 +20,13 @@ namespace Rendering.MatDataTransfer.PerformanceTests
         public int TraceCount;
         public int TimelineRecordCount;
         public int MaterialArrayReadCount;
-        public long SubmitTotalNanoseconds;
+        public long ModuleSubmitterNanoseconds;
         public long SubmitValidateNanoseconds;
         public long PassSyncInstancesNanoseconds;
         public long PassPipelineNanoseconds;
-        public long PipelineResolveNanoseconds;
+        public long ModuleResolverNanoseconds;
         public long PipelineResolveGcAllocatedBytes;
-        public long PipelineWriteNanoseconds;
+        public long ModuleWriterNanoseconds;
         public long PipelineWriteResolveMaterialNanoseconds;
         public long PipelineWriteSetValueNanoseconds;
         public long LoggingCaptureNanoseconds;
@@ -35,5 +36,7 @@ namespace Rendering.MatDataTransfer.PerformanceTests
         public long SyncGcAllocatedBytes;
         public int LiveInstanceCount;
         public int PipelineExecutionCount;
+        public int DirectWriteCount;
+        public long ComparableWorkNanoseconds;
     }
 }

@@ -8,8 +8,17 @@ namespace Rendering.MatDataTransfer.PerformanceTests
 {
     internal sealed class MatDataTransferBatchReportWriter
     {
-        private const string DefaultOutputRoot =
-            @"D:\_QData\QOBData\望月 Work\工具\角色材质统一参数管理 Feature\PerformanceResults\BatchMode";
+        private const string MetricContract = "MDT.Module.v1";
+        private const string ComparisonContract = "MDT.DirectComparison.v1";
+        private static readonly string DefaultOutputRoot = Path.GetFullPath(Path.Combine(
+            Application.dataPath,
+            "..",
+            "Packages",
+            "Q Render Pipeline",
+            "MatDataTransferFeature",
+            "PerformanceTests",
+            "Results",
+            "BatchMode"));
 
         private readonly string m_OutputRoot;
         private readonly string m_RunStamp;
@@ -51,6 +60,7 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                 samples,
                 sampleCount,
                 MatDataTransferBatchPhase.Submission);
+            submissionSamples = SelectSteadySamples(submissionSamples);
             if (submissionSamples.Length == 0)
                 return string.Empty;
 
@@ -169,6 +179,7 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                 samples,
                 sampleCount,
                 MatDataTransferBatchPhase.Submission);
+            submissionSamples = SelectSteadySamples(submissionSamples);
             if (submissionSamples.Length == 0)
                 return string.Empty;
 
@@ -207,7 +218,7 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                 if (writeHeader)
                 {
                     writer.WriteLine(
-                        "ScenarioId,SourceScenarioId,FrameIndex,Input,Group,Winner,Overridden,ResolverElapsedNs");
+                        "ScenarioId,SourceScenarioId,FrameIndex,Input,Group,Winner,Overridden,ModuleResolverElapsedNs");
                 }
 
                 string resolverScenarioId = GetResolverScenarioId(scenario.Id);
@@ -228,7 +239,7 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                     writer.Write(',');
                     writer.Write(sample.OverriddenCount);
                     writer.Write(',');
-                    writer.Write(sample.PipelineResolveNanoseconds);
+                    writer.Write(sample.ModuleResolverNanoseconds);
                     writer.WriteLine();
                 }
             }
@@ -341,14 +352,17 @@ namespace Rendering.MatDataTransfer.PerformanceTests
         {
             StringBuilder builder = new StringBuilder(4096 + sampleCount * 512);
             builder.AppendLine(
-                "ScenarioId,Phase,PipelineMode,FrameIndex,FrameMs,GcAllocatedBytes,ManagedHeapBytes,ActiveInstance,LiveInstance,Payload,Group,Command,Applied,Overridden,Rejected,WriterFailed,Trace,TimelineRecord,MaterialArrayRead,SyncCallCount,SyncElapsedNs,SyncGcAllocatedBytes,PipelineExecutionCount,SubmitTotalNs,SubmitValidateNs,PassSyncInstancesNs,PassPipelineNs,PipelineResolveNs,PipelineWriteNs,PipelineWriteResolveMaterialNs,PipelineWriteSetValueNs,LoggingCaptureNs,LoggingCommitTimelineNs");
+                "MetricContract,ComparisonContract,ScenarioId,Phase,PipelineMode,IsFirstFrameSample,FrameIndex,FrameMs,GcAllocatedBytes,ManagedHeapBytes,ActiveInstance,LiveInstance,Payload,Group,Command,Applied,Overridden,Rejected,WriterFailed,Trace,TimelineRecord,MaterialArrayRead,SyncCallCount,SyncElapsedNs,SyncGcAllocatedBytes,PipelineExecutionCount,DirectWriteCount,ComparableWorkNs,ModuleSubmitterNs,SubmitValidateNs,PassSyncInstancesNs,PassPipelineNs,ModuleResolverNs,ModuleWriterNs,PipelineWriteResolveMaterialNs,PipelineWriteSetValueNs,LoggingCaptureNs,LoggingCommitTimelineNs");
 
             for (int i = 0; i < sampleCount; i++)
             {
                 MatDataTransferBatchFrameStats sample = samples[i];
+                builder.Append(MetricContract).Append(',');
+                builder.Append(ComparisonContract).Append(',');
                 builder.Append(scenario.Id).Append(',');
                 builder.Append(sample.Phase).Append(',');
                 builder.Append(sample.PipelineMode).Append(',');
+                builder.Append(sample.IsFirstFrameSample).Append(',');
                 builder.Append(sample.FrameIndex).Append(',');
                 AppendDouble(builder, sample.FrameMilliseconds).Append(',');
                 builder.Append(sample.GcAllocatedBytes).Append(',');
@@ -369,12 +383,14 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                 builder.Append(sample.SyncElapsedNanoseconds).Append(',');
                 builder.Append(sample.SyncGcAllocatedBytes).Append(',');
                 builder.Append(sample.PipelineExecutionCount).Append(',');
-                builder.Append(sample.SubmitTotalNanoseconds).Append(',');
+                builder.Append(sample.DirectWriteCount).Append(',');
+                builder.Append(sample.ComparableWorkNanoseconds).Append(',');
+                builder.Append(sample.ModuleSubmitterNanoseconds).Append(',');
                 builder.Append(sample.SubmitValidateNanoseconds).Append(',');
                 builder.Append(sample.PassSyncInstancesNanoseconds).Append(',');
                 builder.Append(sample.PassPipelineNanoseconds).Append(',');
-                builder.Append(sample.PipelineResolveNanoseconds).Append(',');
-                builder.Append(sample.PipelineWriteNanoseconds).Append(',');
+                builder.Append(sample.ModuleResolverNanoseconds).Append(',');
+                builder.Append(sample.ModuleWriterNanoseconds).Append(',');
                 builder.Append(sample.PipelineWriteResolveMaterialNanoseconds).Append(',');
                 builder.Append(sample.PipelineWriteSetValueNanoseconds).Append(',');
                 builder.Append(sample.LoggingCaptureNanoseconds).Append(',');
@@ -412,13 +428,17 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             int sampleCount,
             MatDataTransferBatchPhase phase)
         {
+            MatDataTransferBatchFrameStats[] steadySamples = SelectSteadySamples(samples);
+            bool hasFirstFrame = TryGetFirstFrameSample(samples, out MatDataTransferBatchFrameStats firstFrame);
+            samples = steadySamples;
+            sampleCount = steadySamples.Length;
             bool writeHeader = !File.Exists(path);
             using (StreamWriter writer = new StreamWriter(path, true, new UTF8Encoding(false)))
             {
                 if (writeHeader)
                 {
                     writer.WriteLine(
-                        "UnityVersion,OperatingSystem,Processor,ScenarioId,ScenarioName,Phase,PipelineMode,ObjectCount,PropertyCount,SourceCount,ApiMode,Logging,WarmupFrames,MeasurementFrames,ExpectedPayload,ExpectedCommand,FrameMsMedian,FrameMsP95,FrameMsMax,GcBytesMedian,GcBytesP95,GcBytesMax,SyncCallsMedian,SyncMsMedian,SyncMsP95,SyncMsMax,SyncGcBytesMedian,SyncGcBytesP95,SyncGcBytesMax,PipelineExecutionsMedian,SubmitMsMedian,ResolveMsMedian,WriteMsMedian,AppliedMedian,OverriddenMedian,RejectedMax,WriterFailedMax");
+                        "UnityVersion,OperatingSystem,Processor,MetricContract,ScenarioId,ScenarioName,Phase,PipelineMode,ObjectCount,PropertyCount,SourceCount,ApiMode,Logging,WarmupFrames,MeasurementFrames,ExpectedPayload,ExpectedCommand,FrameMsMedian,FrameMsP95,FrameMsMax,GcBytesMedian,GcBytesP95,GcBytesMax,SyncCallsMedian,SyncMsMedian,SyncMsP95,SyncMsMax,SyncGcBytesMedian,SyncGcBytesP95,SyncGcBytesMax,PipelineExecutionsMedian,ModuleSubmitterMsMedian,ModuleResolverMsMedian,ModuleWriterMsMedian,AppliedMedian,OverriddenMedian,RejectedMax,WriterFailedMax,DirectWriteCountMedian,ComparableWorkMsFirst,ComparableWorkMsAverage,ComparableWorkMsMedian,ComparableWorkMsP95,ComparableWorkMsMax,ComparisonContract");
                 }
 
                 Summary frame = Summarize(samples, sampleCount, ValueKind.FrameMs);
@@ -434,6 +454,8 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                 Summary sync = Summarize(samples, sampleCount, ValueKind.SyncNs);
                 Summary syncGc = Summarize(samples, sampleCount, ValueKind.SyncGcBytes);
                 Summary pipelineExecutions = Summarize(samples, sampleCount, ValueKind.PipelineExecutions);
+                Summary directWrites = Summarize(samples, sampleCount, ValueKind.DirectWrites);
+                Summary comparableWork = Summarize(samples, sampleCount, ValueKind.ComparableWorkNs);
                 bool isSubmission = phase == MatDataTransferBatchPhase.Submission;
 
                 writer.Write(Escape(Application.unityVersion));
@@ -441,6 +463,8 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                 writer.Write(Escape(SystemInfo.operatingSystem));
                 writer.Write(',');
                 writer.Write(Escape(SystemInfo.processorType));
+                writer.Write(',');
+                writer.Write(MetricContract);
                 writer.Write(',');
                 writer.Write(scenario.Id);
                 writer.Write(',');
@@ -509,6 +533,22 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                 WriteDouble(writer, rejected.Max);
                 writer.Write(',');
                 WriteDouble(writer, writerFailed.Max);
+                writer.Write(',');
+                WriteDouble(writer, directWrites.Median);
+                writer.Write(',');
+                WriteDouble(
+                    writer,
+                    hasFirstFrame ? firstFrame.ComparableWorkNanoseconds / 1000000.0 : 0.0);
+                writer.Write(',');
+                WriteDouble(writer, comparableWork.Average / 1000000.0);
+                writer.Write(',');
+                WriteDouble(writer, comparableWork.Median / 1000000.0);
+                writer.Write(',');
+                WriteDouble(writer, comparableWork.P95 / 1000000.0);
+                writer.Write(',');
+                WriteDouble(writer, comparableWork.Max / 1000000.0);
+                writer.Write(',');
+                writer.Write(ComparisonContract);
                 writer.WriteLine();
             }
         }
@@ -543,6 +583,8 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             MatDataTransferBatchPhase phase,
             string rawPath)
         {
+            bool hasFirstFrame = TryGetFirstFrameSample(samples, out MatDataTransferBatchFrameStats firstFrame);
+            samples = SelectSteadySamples(samples);
             int sampleCount = samples.Length;
             Summary frame = Summarize(samples, sampleCount, ValueKind.FrameMs);
             Summary gc = Summarize(samples, sampleCount, ValueKind.GcBytes);
@@ -553,10 +595,14 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             Summary sync = Summarize(samples, sampleCount, ValueKind.SyncNs);
             Summary syncGc = Summarize(samples, sampleCount, ValueKind.SyncGcBytes);
             Summary pipelineExecutions = Summarize(samples, sampleCount, ValueKind.PipelineExecutions);
+            Summary directWrites = Summarize(samples, sampleCount, ValueKind.DirectWrites);
+            Summary comparableWork = Summarize(samples, sampleCount, ValueKind.ComparableWorkNs)
+                .Scale(1.0 / 1000000.0);
 
             writer.WriteLine("## " + scenario.TestName + " / " + phase);
             writer.WriteLine();
             writer.WriteLine("- Pipeline mode: `" + samples[0].PipelineMode + "`");
+            writer.WriteLine("- Metric contract: `" + MetricContract + "`");
             writer.WriteLine();
             writer.WriteLine("| Metric | Median | P95 | Max |");
             writer.WriteLine("|---|---:|---:|---:|");
@@ -566,9 +612,18 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             WriteMarkdownRow(writer, "Sync ms", sync.Scale(1.0 / 1000000.0));
             WriteMarkdownRow(writer, "Sync GC bytes", syncGc);
             WriteMarkdownRow(writer, "Pipeline executions", pipelineExecutions);
-            WriteMarkdownRow(writer, "Submit ms", submit.Scale(1.0 / 1000000.0));
-            WriteMarkdownRow(writer, "Resolve ms", resolve.Scale(1.0 / 1000000.0));
-            WriteMarkdownRow(writer, "Write ms", write.Scale(1.0 / 1000000.0));
+            WriteMarkdownRow(writer, "Module Submitter ms", submit.Scale(1.0 / 1000000.0));
+            WriteMarkdownRow(writer, "Module Resolver ms", resolve.Scale(1.0 / 1000000.0));
+            WriteMarkdownRow(writer, "Module Writer ms", write.Scale(1.0 / 1000000.0));
+            WriteMarkdownRow(writer, "Direct writes", directWrites);
+            writer.Write("| Comparable work first ms | ");
+            WriteDouble(
+                writer,
+                hasFirstFrame ? firstFrame.ComparableWorkNanoseconds / 1000000.0 : 0.0);
+            writer.WriteLine(" | - | - |");
+            writer.Write("| Comparable work steady average ms | ");
+            WriteDouble(writer, comparableWork.Average);
+            writer.WriteLine(" | - | - |");
             writer.WriteLine();
             writer.WriteLine("- Raw CSV: `" + rawPath + "`");
             writer.WriteLine("- Expected Payload: `" + (phase == MatDataTransferBatchPhase.Submission ? scenario.ExpectedPayloadCount : 0) + "`");
@@ -600,6 +655,44 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             return result;
         }
 
+        private static MatDataTransferBatchFrameStats[] SelectSteadySamples(
+            MatDataTransferBatchFrameStats[] samples)
+        {
+            int count = 0;
+            for (int i = 0; i < samples.Length; i++)
+            {
+                if (!samples[i].IsFirstFrameSample)
+                    count++;
+            }
+
+            MatDataTransferBatchFrameStats[] result = new MatDataTransferBatchFrameStats[count];
+            int targetIndex = 0;
+            for (int i = 0; i < samples.Length; i++)
+            {
+                if (!samples[i].IsFirstFrameSample)
+                    result[targetIndex++] = samples[i];
+            }
+
+            return result;
+        }
+
+        private static bool TryGetFirstFrameSample(
+            MatDataTransferBatchFrameStats[] samples,
+            out MatDataTransferBatchFrameStats firstFrame)
+        {
+            for (int i = 0; i < samples.Length; i++)
+            {
+                if (!samples[i].IsFirstFrameSample)
+                    continue;
+
+                firstFrame = samples[i];
+                return true;
+            }
+
+            firstFrame = default;
+            return false;
+        }
+
         private static Summary Summarize(
             MatDataTransferBatchFrameStats[] samples,
             int sampleCount,
@@ -628,13 +721,13 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                 case ValueKind.GcBytes:
                     return sample.GcAllocatedBytes;
                 case ValueKind.SubmitNs:
-                    return sample.SubmitTotalNanoseconds;
+                    return sample.ModuleSubmitterNanoseconds;
                 case ValueKind.ResolveNs:
-                    return sample.PipelineResolveNanoseconds;
+                    return sample.ModuleResolverNanoseconds;
                 case ValueKind.ResolveGcBytes:
                     return sample.PipelineResolveGcAllocatedBytes;
                 case ValueKind.WriteNs:
-                    return sample.PipelineWriteNanoseconds;
+                    return sample.ModuleWriterNanoseconds;
                 case ValueKind.Applied:
                     return sample.AppliedCount;
                 case ValueKind.Overridden:
@@ -651,6 +744,10 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                     return sample.SyncGcAllocatedBytes;
                 case ValueKind.PipelineExecutions:
                     return sample.PipelineExecutionCount;
+                case ValueKind.DirectWrites:
+                    return sample.DirectWriteCount;
+                case ValueKind.ComparableWorkNs:
+                    return sample.ComparableWorkNanoseconds;
                 case ValueKind.FrameMs:
                 default:
                     return sample.FrameMilliseconds;
@@ -727,7 +824,9 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             SyncCalls,
             SyncNs,
             SyncGcBytes,
-            PipelineExecutions
+            PipelineExecutions,
+            DirectWrites,
+            ComparableWorkNs
         }
 
         private readonly struct Summary

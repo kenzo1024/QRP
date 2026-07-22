@@ -1,0 +1,9 @@
+ScenarioId,ScenarioDescription,LoggingMode,MetricScope,InputCount,RunCount,BaselineMedianMs,OptimizedMedianMs,TimeDeltaPercent,BaselineP95Ms,OptimizedP95Ms,P95DeltaPercent,BaselineGcMedianBytes,OptimizedGcMedianBytes,GcDeltaPercent,Comparable,Conclusion
+S04,"10800 Payload 的公开 Submit API 主真实负载",Disabled,"Submit stage",10800,3,47.8744,42.4179,-11.40,61.4877,45.2622,-26.39,4613400,2194200,-52.44,True,"Trace 保留；Step、空 List 和诊断上下文分配已移除"
+W03,"3600 Command 的纯 MaterialInstance Writer",Disabled,"Writer stage",3600,3,4.4010,4.7602,8.16,4.6184,5.0590,9.54,460800,288000,-37.50,True,"剩余 80 B/Command 来自每条命令两次 renderer.materials 数组读取"
+W06,"3600 Command 的完整 Writer 日志路径",Enabled,"Writer stage",3600,3,20.5725,37.3734,,,65.2209,,4132800,5370440,,False,"旧 W06 未真正开启 EnableLogging；新 W06 包含 Timeline、Preview 和 Summary，不能直接比较"
+B04,"300 对象 x 12 属性 x 3 来源的完整无日志主负载",Disabled,"Full pipeline submission",10800,3,78.4999,52.9318,-32.57,91.8615,58.1320,-36.72,8527666,2494066,-70.75,True,"无日志快速路径的最终业务收益"
+B04.Submit,"B04 完整流水线内的 Submit Marker",Disabled,"Pipeline Submit",10800,3,40.1549,33.1050,-17.56,,,,,,,True,"提交仍是下一阶段最大的无日志 CPU 来源"
+B04.Resolve,"B04 完整流水线内的 Resolver Marker",Disabled,"Pipeline Resolve",10800,3,2.2833,2.5888,13.38,,,,,,,True,"为保证败者 Trace 状态正确，增加约 0.31 ms"
+B04.Writer,"B04 完整流水线内的 Writer Marker",Disabled,"Pipeline Writer",3600,3,22.0811,5.6484,-74.42,,,,,,,True,"无日志不再创建 Step、Receipt、Path 和 Snapshot"
+B09,"与 B04 相同输入但开启完整 Timeline 日志",Enabled,"Full pipeline submission",10800,3,179.1718,167.6801,-6.41,280.8865,290.8379,3.54,31228774,30681574,-1.75,True,"Median 略降但 P95 略升；完整日志仍约 30.68 MB GC"

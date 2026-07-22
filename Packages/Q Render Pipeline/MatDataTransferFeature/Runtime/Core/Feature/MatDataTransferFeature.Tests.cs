@@ -67,6 +67,21 @@ namespace Rendering.MatDataTransfer.Runtime
             return m_ResolutionStats;
         }
 
+        internal WriterStats GetWriterStats()
+        {
+            return m_Writer != null ? m_Writer.LastStats : default;
+        }
+
+        internal int GetQueuedRequestCountForTests()
+        {
+            return m_ValidatedRequests.Count;
+        }
+
+        internal void ClearQueuedRequestsForTests()
+        {
+            ClearQueuedRequests();
+        }
+
         partial void OnTransferPipelineExecuted()
         {
             m_TestPipelineExecutionCount++;

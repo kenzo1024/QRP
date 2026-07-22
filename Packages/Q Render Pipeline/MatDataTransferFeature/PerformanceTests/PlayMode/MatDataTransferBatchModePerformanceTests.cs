@@ -19,13 +19,13 @@ using UnityEditorInternal;
 namespace Rendering.MatDataTransfer.PerformanceTests
 {
     [TestFixture]
-    internal sealed class MatDataTransferBatchModePerformanceTests
+    internal sealed partial class MatDataTransferBatchModePerformanceTests
     {
         private static readonly SampleGroup FrameMsGroup = new SampleGroup("MDT.Batch.Frame", SampleUnit.Millisecond);
         private static readonly SampleGroup GcBytesGroup = new SampleGroup("MDT.Batch.GCAllocated", SampleUnit.Byte);
-        private static readonly SampleGroup SubmitMsGroup = new SampleGroup("MDT.Batch.Submit", SampleUnit.Millisecond);
-        private static readonly SampleGroup ResolveMsGroup = new SampleGroup("MDT.Batch.Resolve", SampleUnit.Millisecond);
-        private static readonly SampleGroup WriteMsGroup = new SampleGroup("MDT.Batch.Write", SampleUnit.Millisecond);
+        private static readonly SampleGroup SubmitMsGroup = new SampleGroup("MDT.Batch.ModuleSubmitter", SampleUnit.Millisecond);
+        private static readonly SampleGroup ResolveMsGroup = new SampleGroup("MDT.Batch.ModuleResolver", SampleUnit.Millisecond);
+        private static readonly SampleGroup WriteMsGroup = new SampleGroup("MDT.Batch.ModuleWriter", SampleUnit.Millisecond);
 
         private GameObject m_Root;
         private Camera m_Camera;
@@ -52,11 +52,29 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             public int LogicalFrame;
         }
 
+        private readonly struct PhaseWorkResult
+        {
+            public readonly int DirectWriteCount;
+            public readonly long ElapsedNanoseconds;
+
+            public PhaseWorkResult(int directWriteCount, long elapsedNanoseconds)
+            {
+                DirectWriteCount = directWriteCount;
+                ElapsedNanoseconds = elapsedNanoseconds;
+            }
+        }
+
         [TearDown]
         public void TearDown()
         {
+            m_StageWriter?.ClearWrittenState();
+            m_StageWriter = null;
+
             if (MatDataTransferFeature.Instance != null)
+            {
+                MatDataTransferFeature.Instance.ClearQueuedRequestsForTests();
                 MatDataTransferFeature.Instance.TrySetMaxInstanceCount(m_OriginalCapacity);
+            }
 
             MatDataTransferLogging.Instance.ApplySettings(new MatDataTransferLoggingSettings());
             MatDataTransferLogging.Instance.ClearTimelineRecords();
@@ -69,6 +87,7 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                 UnityEngine.Object.Destroy(m_RenderTarget);
 
             RestoreRenderPipeline();
+            RestoreStageGcProfiling();
             RestoreResolverGcProfiling();
         }
 
@@ -138,6 +157,12 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             yield return RunScenario(MatDataTransferBatchScenario.B09_Logging());
         }
 
+        [UnityTest, Performance]
+        public IEnumerator B10_BatchMainRealLoad()
+        {
+            yield return RunScenario(MatDataTransferBatchScenario.B10_BatchMainRealLoad());
+        }
+
         private IEnumerator RunScenario(MatDataTransferBatchScenario scenario)
         {
             ConfigureResolverGcProfiling();
@@ -163,6 +188,23 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                     false,
                     recorders,
                     state);
+
+                m_Driver.PrepareDirectWriteTargets();
+                yield return MeasurePhase(
+                    scenario,
+                    MatDataTransferBatchPhase.DirectMaterialSet,
+                    false,
+                    recorders,
+                    state);
+                m_Driver.AssertDirectMaterialValues(state.LogicalFrame - 1, 16);
+                yield return MeasurePhase(
+                    scenario,
+                    MatDataTransferBatchPhase.DirectPropertyBlock,
+                    false,
+                    recorders,
+                    state);
+                m_Driver.AssertDirectPropertyBlockValues(state.LogicalFrame - 1, 16);
+                m_Driver.ClearDirectPropertyBlocks();
 
                 m_Driver.AttachInstances();
                 yield return WaitForInstancesReady(scenario);
@@ -195,10 +237,20 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             MetricRecorders recorders,
             MeasurementState state)
         {
+            if (IsComparablePhase(phase))
+            {
+                yield return MeasurePhaseSample(
+                    scenario,
+                    phase,
+                    submit,
+                    true,
+                    recorders,
+                    state);
+            }
+
             for (int i = 0; i < scenario.WarmupFrames; i++)
             {
-                if (submit)
-                    m_Driver.SubmitFrame(state.LogicalFrame);
+                ExecutePhaseWork(phase, submit, state.LogicalFrame);
 
                 RequestCameraRender();
                 state.LogicalFrame++;
@@ -208,45 +260,104 @@ namespace Rendering.MatDataTransfer.PerformanceTests
 
             for (int i = 0; i < scenario.MeasurementFrames; i++)
             {
-                MatDataTransferFeature.Instance.ResetInstanceSyncStats();
-                double start = Time.realtimeSinceStartupAsDouble;
-                if (submit)
-                    m_Driver.SubmitFrame(state.LogicalFrame);
-
-                RequestCameraRender();
-                yield return null;
-                long manualPipelineNanoseconds = ExecuteManualPipelineIfNeeded();
-                long resolverGcAllocatedBytes = phase == MatDataTransferBatchPhase.Submission
-                    ? ReadResolverGcAllocatedBytes()
-                    : 0L;
-                MatDataTransferInstanceSyncStats syncStats =
-                    MatDataTransferFeature.Instance.GetInstanceSyncStats();
-
-                MatDataTransferBatchFrameStats stats = CollectStats(
+                yield return MeasurePhaseSample(
                     scenario,
                     phase,
-                    PipelineMode,
+                    submit,
+                    false,
                     recorders,
-                    state.LogicalFrame,
-                    (Time.realtimeSinceStartupAsDouble - start) * 1000.0,
-                    manualPipelineNanoseconds,
-                    syncStats,
-                    resolverGcAllocatedBytes);
-                AssertFrameStats(scenario, phase, stats);
-                state.Samples.Add(stats);
-
-                if (phase == MatDataTransferBatchPhase.Submission
-                    || (scenario.SourceCount == 0 && phase == MatDataTransferBatchPhase.InstanceIdle))
-                {
-                    Measure.Custom(FrameMsGroup, stats.FrameMilliseconds);
-                    Measure.Custom(GcBytesGroup, stats.GcAllocatedBytes);
-                    Measure.Custom(SubmitMsGroup, stats.SubmitTotalNanoseconds / 1000000.0);
-                    Measure.Custom(ResolveMsGroup, stats.PipelineResolveNanoseconds / 1000000.0);
-                    Measure.Custom(WriteMsGroup, stats.PipelineWriteNanoseconds / 1000000.0);
-                }
-
-                state.LogicalFrame++;
+                    state);
             }
+        }
+
+        private IEnumerator MeasurePhaseSample(
+            MatDataTransferBatchScenario scenario,
+            MatDataTransferBatchPhase phase,
+            bool submit,
+            bool isFirstFrameSample,
+            MetricRecorders recorders,
+            MeasurementState state)
+        {
+            MatDataTransferFeature.Instance.ResetInstanceSyncStats();
+            double start = Time.realtimeSinceStartupAsDouble;
+            PhaseWorkResult work = ExecutePhaseWork(phase, submit, state.LogicalFrame);
+
+            RequestCameraRender();
+            yield return null;
+            long manualPipelineNanoseconds = ExecuteManualPipelineIfNeeded();
+            long resolverGcAllocatedBytes = phase == MatDataTransferBatchPhase.Submission
+                ? ReadResolverGcAllocatedBytes()
+                : 0L;
+            MatDataTransferInstanceSyncStats syncStats =
+                MatDataTransferFeature.Instance.GetInstanceSyncStats();
+
+            MatDataTransferBatchFrameStats stats = CollectStats(
+                scenario,
+                phase,
+                PipelineMode,
+                recorders,
+                state.LogicalFrame,
+                isFirstFrameSample,
+                (Time.realtimeSinceStartupAsDouble - start) * 1000.0,
+                work,
+                manualPipelineNanoseconds,
+                syncStats,
+                resolverGcAllocatedBytes);
+            AssertFrameStats(scenario, phase, stats);
+            state.Samples.Add(stats);
+
+            if (!isFirstFrameSample
+                && (phase == MatDataTransferBatchPhase.Submission
+                    || (scenario.SourceCount == 0 && phase == MatDataTransferBatchPhase.InstanceIdle)))
+            {
+                Measure.Custom(FrameMsGroup, stats.FrameMilliseconds);
+                Measure.Custom(GcBytesGroup, stats.GcAllocatedBytes);
+                Measure.Custom(SubmitMsGroup, stats.ModuleSubmitterNanoseconds / 1000000.0);
+                Measure.Custom(ResolveMsGroup, stats.ModuleResolverNanoseconds / 1000000.0);
+                Measure.Custom(WriteMsGroup, stats.ModuleWriterNanoseconds / 1000000.0);
+            }
+
+            state.LogicalFrame++;
+        }
+
+        private PhaseWorkResult ExecutePhaseWork(
+            MatDataTransferBatchPhase phase,
+            bool submit,
+            int logicalFrame)
+        {
+            if (phase == MatDataTransferBatchPhase.DirectMaterialSet)
+            {
+                m_Driver.PrepareDirectValues(logicalFrame);
+                long start = System.Diagnostics.Stopwatch.GetTimestamp();
+                int writeCount = m_Driver.SetAllMaterialProperties();
+                return BuildPhaseWorkResult(writeCount, start);
+            }
+            if (phase == MatDataTransferBatchPhase.DirectPropertyBlock)
+            {
+                m_Driver.PrepareDirectValues(logicalFrame);
+                long start = System.Diagnostics.Stopwatch.GetTimestamp();
+                int writeCount = m_Driver.SetAllPropertyBlockProperties();
+                return BuildPhaseWorkResult(writeCount, start);
+            }
+
+            if (submit)
+                m_Driver.SubmitFrame(logicalFrame);
+            return default;
+        }
+
+        private static PhaseWorkResult BuildPhaseWorkResult(int writeCount, long startTimestamp)
+        {
+            long elapsed = System.Diagnostics.Stopwatch.GetTimestamp() - startTimestamp;
+            return new PhaseWorkResult(
+                writeCount,
+                elapsed * 1000000000L / System.Diagnostics.Stopwatch.Frequency);
+        }
+
+        private static bool IsComparablePhase(MatDataTransferBatchPhase phase)
+        {
+            return phase == MatDataTransferBatchPhase.DirectMaterialSet
+                || phase == MatDataTransferBatchPhase.DirectPropertyBlock
+                || phase == MatDataTransferBatchPhase.Submission;
         }
 
         private IEnumerator EnsureFeatureReady()
@@ -459,17 +570,21 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             MatDataTransferBatchPipelineMode pipelineMode,
             MetricRecorders recorders,
             int logicalFrame,
+            bool isFirstFrameSample,
             double frameMilliseconds,
+            PhaseWorkResult work,
             long manualPipelineNanoseconds,
             MatDataTransferInstanceSyncStats syncStats,
             long resolverGcAllocatedBytes)
         {
             IReadOnlyList<ParamWriteResult> receipts = MatDataTransferLogging.Instance.LastReceipts;
             ResolutionStats resolutionStats = MatDataTransferFeature.Instance.GetResolutionStats();
+            WriterStats writerStats = MatDataTransferFeature.Instance.GetWriterStats();
             MatDataTransferBatchFrameStats stats = new MatDataTransferBatchFrameStats
             {
                 Phase = phase,
                 PipelineMode = pipelineMode,
+                IsFirstFrameSample = isFirstFrameSample,
                 FrameIndex = logicalFrame,
                 FrameMilliseconds = frameMilliseconds,
                 GcAllocatedBytes = recorders.GcAllocatedBytes,
@@ -481,15 +596,15 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                 OverriddenCount = resolutionStats.OverriddenCount,
                 TraceCount = scenario.EnableLogging ? MatDataTransferLogging.Instance.TimelineRecords.Count : 0,
                 TimelineRecordCount = scenario.EnableLogging ? MatDataTransferLogging.Instance.TimelineRecords.Count : 0,
-                SubmitTotalNanoseconds = recorders.SubmitTotalNanoseconds,
+                ModuleSubmitterNanoseconds = recorders.ModuleSubmitterNanoseconds,
                 SubmitValidateNanoseconds = recorders.SubmitValidateNanoseconds,
                 PassSyncInstancesNanoseconds = recorders.PassSyncInstancesNanoseconds,
                 PassPipelineNanoseconds = recorders.PassPipelineNanoseconds != 0
                     ? recorders.PassPipelineNanoseconds
                     : manualPipelineNanoseconds,
-                PipelineResolveNanoseconds = recorders.PipelineResolveNanoseconds,
+                ModuleResolverNanoseconds = recorders.ModuleResolverNanoseconds,
                 PipelineResolveGcAllocatedBytes = resolverGcAllocatedBytes,
-                PipelineWriteNanoseconds = recorders.PipelineWriteNanoseconds,
+                ModuleWriterNanoseconds = recorders.ModuleWriterNanoseconds,
                 PipelineWriteResolveMaterialNanoseconds = recorders.PipelineWriteResolveMaterialNanoseconds,
                 PipelineWriteSetValueNanoseconds = recorders.PipelineWriteSetValueNanoseconds,
                 LoggingCaptureNanoseconds = recorders.LoggingCaptureNanoseconds,
@@ -498,8 +613,15 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                 SyncElapsedNanoseconds = syncStats.ElapsedNanoseconds,
                 SyncGcAllocatedBytes = syncStats.GcAllocatedBytes,
                 LiveInstanceCount = syncStats.LiveInstanceCount,
-                PipelineExecutionCount = syncStats.PipelineExecutionCount
+                PipelineExecutionCount = syncStats.PipelineExecutionCount,
+                DirectWriteCount = work.DirectWriteCount
             };
+
+            stats.ComparableWorkNanoseconds = phase == MatDataTransferBatchPhase.Submission
+                ? stats.ModuleSubmitterNanoseconds
+                    + stats.ModuleResolverNanoseconds
+                    + stats.ModuleWriterNanoseconds
+                : work.ElapsedNanoseconds;
 
             for (int i = 0; i < receipts.Count; i++)
             {
@@ -515,6 +637,12 @@ namespace Rendering.MatDataTransfer.PerformanceTests
                         stats.WriterFailedCount++;
                         break;
                 }
+            }
+
+            if (!scenario.EnableLogging)
+            {
+                stats.AppliedCount = writerStats.AppliedCount;
+                stats.WriterFailedCount = writerStats.FailedCount;
             }
 
             return stats;
@@ -636,10 +764,11 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             MatDataTransferBatchFrameStats stats)
         {
             bool isSubmission = phase == MatDataTransferBatchPhase.Submission;
-            int expectedInstances = phase == MatDataTransferBatchPhase.UrpBaseline
-                || phase == MatDataTransferBatchPhase.RendererBaseline
-                    ? 0
-                    : scenario.ObjectCount;
+            bool isDirectWrite = phase == MatDataTransferBatchPhase.DirectMaterialSet
+                || phase == MatDataTransferBatchPhase.DirectPropertyBlock;
+            int expectedInstances = phase == MatDataTransferBatchPhase.InstanceIdle || isSubmission
+                ? scenario.ObjectCount
+                : 0;
 
             Assert.That(stats.ActiveInstanceCount, Is.EqualTo(expectedInstances));
             Assert.That(stats.PayloadCount, Is.EqualTo(isSubmission ? scenario.ExpectedPayloadCount : 0), scenario.TestName + " payload count mismatch.");
@@ -649,6 +778,13 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             Assert.That(stats.OverriddenCount, Is.EqualTo(isSubmission ? scenario.ExpectedOverriddenCount : 0), scenario.TestName + " overridden count mismatch.");
             Assert.That(stats.RejectedCount, Is.EqualTo(0), scenario.TestName + " has rejected requests.");
             Assert.That(stats.WriterFailedCount, Is.EqualTo(0), scenario.TestName + " has writer failures.");
+            Assert.That(
+                stats.DirectWriteCount,
+                Is.EqualTo(isDirectWrite ? scenario.ExpectedGroupCount : 0),
+                scenario.TestName + " direct write count mismatch.");
+
+            if (IsComparablePhase(phase))
+                Assert.That(stats.ComparableWorkNanoseconds, Is.GreaterThan(0L));
 
             if (phase == MatDataTransferBatchPhase.InstanceIdle || isSubmission)
             {
@@ -673,12 +809,12 @@ namespace Rendering.MatDataTransfer.PerformanceTests
         {
             private readonly ProfilerRecorder m_GcAllocated;
             private readonly ProfilerRecorder m_ManagedHeap;
-            private readonly ProfilerRecorder m_SubmitTotal;
+            private readonly ProfilerRecorder m_ModuleSubmitter;
             private readonly ProfilerRecorder m_SubmitValidate;
             private readonly ProfilerRecorder m_PassSyncInstances;
             private readonly ProfilerRecorder m_PassPipeline;
-            private readonly ProfilerRecorder m_PipelineResolve;
-            private readonly ProfilerRecorder m_PipelineWrite;
+            private readonly ProfilerRecorder m_ModuleResolver;
+            private readonly ProfilerRecorder m_ModuleWriter;
             private readonly ProfilerRecorder m_PipelineWriteResolveMaterial;
             private readonly ProfilerRecorder m_PipelineWriteSetValue;
             private readonly ProfilerRecorder m_LoggingCapture;
@@ -688,12 +824,12 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             {
                 m_GcAllocated = Start(ProfilerCategory.Memory, "GC Allocated In Frame");
                 m_ManagedHeap = Start(ProfilerCategory.Memory, "Managed Heap Used Size");
-                m_SubmitTotal = Start(ProfilerCategory.Scripts, "MDT.Submit.Total");
+                m_ModuleSubmitter = Start(ProfilerCategory.Scripts, "MDT.Module.Submitter");
                 m_SubmitValidate = Start(ProfilerCategory.Scripts, "MDT.Submit.Validate");
                 m_PassSyncInstances = Start(ProfilerCategory.Scripts, "MDT.Pass.SyncInstances");
                 m_PassPipeline = Start(ProfilerCategory.Scripts, "MDT.Pass.Pipeline");
-                m_PipelineResolve = Start(ProfilerCategory.Scripts, "MDT.Pipeline.Resolve");
-                m_PipelineWrite = Start(ProfilerCategory.Scripts, "MDT.Pipeline.Write");
+                m_ModuleResolver = Start(ProfilerCategory.Scripts, "MDT.Module.Resolver");
+                m_ModuleWriter = Start(ProfilerCategory.Scripts, "MDT.Module.Writer");
                 m_PipelineWriteResolveMaterial = Start(ProfilerCategory.Scripts, "MDT.Pipeline.Write.ResolveMaterial");
                 m_PipelineWriteSetValue = Start(ProfilerCategory.Scripts, "MDT.Pipeline.Write.SetValue");
                 m_LoggingCapture = Start(ProfilerCategory.Scripts, "MDT.Logging.Capture");
@@ -702,12 +838,12 @@ namespace Rendering.MatDataTransfer.PerformanceTests
 
             public long GcAllocatedBytes => LastValue(m_GcAllocated);
             public long ManagedHeapBytes => LastValue(m_ManagedHeap);
-            public long SubmitTotalNanoseconds => LastValue(m_SubmitTotal);
+            public long ModuleSubmitterNanoseconds => LastValue(m_ModuleSubmitter);
             public long SubmitValidateNanoseconds => LastValue(m_SubmitValidate);
             public long PassSyncInstancesNanoseconds => LastValue(m_PassSyncInstances);
             public long PassPipelineNanoseconds => LastValue(m_PassPipeline);
-            public long PipelineResolveNanoseconds => LastValue(m_PipelineResolve);
-            public long PipelineWriteNanoseconds => LastValue(m_PipelineWrite);
+            public long ModuleResolverNanoseconds => LastValue(m_ModuleResolver);
+            public long ModuleWriterNanoseconds => LastValue(m_ModuleWriter);
             public long PipelineWriteResolveMaterialNanoseconds => LastValue(m_PipelineWriteResolveMaterial);
             public long PipelineWriteSetValueNanoseconds => LastValue(m_PipelineWriteSetValue);
             public long LoggingCaptureNanoseconds => LastValue(m_LoggingCapture);
@@ -717,12 +853,12 @@ namespace Rendering.MatDataTransfer.PerformanceTests
             {
                 DisposeRecorder(m_GcAllocated);
                 DisposeRecorder(m_ManagedHeap);
-                DisposeRecorder(m_SubmitTotal);
+                DisposeRecorder(m_ModuleSubmitter);
                 DisposeRecorder(m_SubmitValidate);
                 DisposeRecorder(m_PassSyncInstances);
                 DisposeRecorder(m_PassPipeline);
-                DisposeRecorder(m_PipelineResolve);
-                DisposeRecorder(m_PipelineWrite);
+                DisposeRecorder(m_ModuleResolver);
+                DisposeRecorder(m_ModuleWriter);
                 DisposeRecorder(m_PipelineWriteResolveMaterial);
                 DisposeRecorder(m_PipelineWriteSetValue);
                 DisposeRecorder(m_LoggingCapture);
