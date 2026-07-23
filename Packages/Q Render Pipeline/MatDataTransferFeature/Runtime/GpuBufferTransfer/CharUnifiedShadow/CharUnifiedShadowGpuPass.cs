@@ -18,33 +18,31 @@ namespace Rendering.MatDataTransfer.Runtime.GpuBuffer.CharUnifiedShadow
 
         private static CharUnifiedShadowGpuPass s_Instance;
 
-        private sealed class SourceState
-        {
-            internal GpuBufferHandle Handle;
-        }
-
 #if UNITY_EDITOR
         private readonly struct DebugReadbackTarget
         {
             internal readonly CharUnifiedShadowGpuSource Source;
-            internal readonly GpuBufferHandle Handle;
+            internal readonly Renderer Renderer;
+            internal readonly GpuBufferSlice SampleSlice;
 
             internal DebugReadbackTarget(
                 CharUnifiedShadowGpuSource source,
-                GpuBufferHandle handle)
+                Renderer renderer,
+                GpuBufferSlice sampleSlice)
             {
                 Source = source;
-                Handle = handle;
+                Renderer = renderer;
+                SampleSlice = sampleSlice;
             }
         }
 #endif
 
-        private readonly GpuBufferProvider<CharUnifiedShadowGpuInput> m_InputProvider;
+        private readonly RendererIndexedGpuBufferProvider<CharUnifiedShadowGpuInput>
+            m_InputProvider;
         private readonly GpuBufferStorage<CharUnifiedShadowGpuRange> m_RangeStorage;
         private readonly GpuBufferStorage<Vector4> m_SampleStorage;
-        private readonly RendererGpuBufferIndexBinder m_RendererBinder;
-        private readonly Dictionary<CharUnifiedShadowGpuSource, SourceState> m_Sources =
-            new Dictionary<CharUnifiedShadowGpuSource, SourceState>();
+        private readonly HashSet<CharUnifiedShadowGpuSource> m_Sources =
+            new HashSet<CharUnifiedShadowGpuSource>();
         private readonly List<CharUnifiedShadowGpuSource> m_DeadSources =
             new List<CharUnifiedShadowGpuSource>();
 
@@ -57,15 +55,13 @@ namespace Rendering.MatDataTransfer.Runtime.GpuBuffer.CharUnifiedShadow
 
         private CharUnifiedShadowGpuPass()
         {
-            m_InputProvider = new GpuBufferProvider<CharUnifiedShadowGpuInput>(
+            m_InputProvider = new RendererIndexedGpuBufferProvider<CharUnifiedShadowGpuInput>(
                 "Character Unified Shadow Inputs",
                 InputsId);
             m_RangeStorage = new GpuBufferStorage<CharUnifiedShadowGpuRange>(
                 "Character Unified Shadow Ranges");
             m_SampleStorage = new GpuBufferStorage<Vector4>(
                 "Character Unified Shadow Samples");
-            m_RendererBinder = new RendererGpuBufferIndexBinder();
-
             m_ComputeShader = Resources.Load<ComputeShader>(ComputeResourceName);
             if (m_ComputeShader != null)
                 m_ComputeKernel = m_ComputeShader.FindKernel(ComputeKernelName);
@@ -99,13 +95,10 @@ namespace Rendering.MatDataTransfer.Runtime.GpuBuffer.CharUnifiedShadow
 
         internal static void RefreshRendererBindings(CharUnifiedShadowGpuSource source)
         {
-            if (s_Instance == null || source == null
-                || !s_Instance.m_Sources.TryGetValue(source, out SourceState state))
-            {
+            if (s_Instance == null || source == null || !s_Instance.m_Sources.Contains(source))
                 return;
-            }
 
-            s_Instance.m_RendererBinder.Sync(source, state.Handle.Index, source.Renderers);
+            RendererGpuBufferIndexRegistry.Sync(source, source.Renderers);
         }
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
@@ -117,30 +110,27 @@ namespace Rendering.MatDataTransfer.Runtime.GpuBuffer.CharUnifiedShadow
 
         private void RegisterSource(CharUnifiedShadowGpuSource source)
         {
-            if (m_Sources.TryGetValue(source, out SourceState existing))
+            if (!m_Sources.Add(source))
             {
-                m_RendererBinder.Sync(source, existing.Handle.Index, source.Renderers);
+                RendererGpuBufferIndexRegistry.Sync(source, source.Renderers);
                 return;
             }
 
-            GpuBufferHandle handle = m_InputProvider.Register(source);
-            m_Sources.Add(source, new SourceState { Handle = handle });
-            m_RendererBinder.Sync(source, handle.Index, source.Renderers);
+            RendererGpuBufferIndexRegistry.Sync(source, source.Renderers);
+            source.ForceGpuReset();
             if (EnsureOutputCapacity())
             {
-                foreach (CharUnifiedShadowGpuSource registeredSource in m_Sources.Keys)
+                foreach (CharUnifiedShadowGpuSource registeredSource in m_Sources)
                     registeredSource.ForceGpuReset();
             }
         }
 
         private void UnregisterSource(CharUnifiedShadowGpuSource source)
         {
-            if (!m_Sources.TryGetValue(source, out _))
+            if (!m_Sources.Remove(source))
                 return;
 
-            m_RendererBinder.Release(source);
-            m_InputProvider.Unregister(source);
-            m_Sources.Remove(source);
+            RendererGpuBufferIndexRegistry.Release(source);
         }
 
         public void PrepareFrame(int frameIndex)
@@ -150,13 +140,18 @@ namespace Rendering.MatDataTransfer.Runtime.GpuBuffer.CharUnifiedShadow
             if (m_Sources.Count == 0)
                 return;
 
+            foreach (CharUnifiedShadowGpuSource source in m_Sources)
+                RendererGpuBufferIndexRegistry.Sync(source, source.Renderers);
+
+            m_InputProvider.BeginFrame();
             if (EnsureOutputCapacity())
             {
-                foreach (CharUnifiedShadowGpuSource source in m_Sources.Keys)
+                foreach (CharUnifiedShadowGpuSource source in m_Sources)
                     source.ForceGpuReset();
             }
 
-            m_InputProvider.CollectFrameData();
+            foreach (CharUnifiedShadowGpuSource source in m_Sources)
+                m_InputProvider.SetData(source.Renderers, source);
             m_InputProvider.Upload();
         }
 
@@ -187,7 +182,7 @@ namespace Rendering.MatDataTransfer.Runtime.GpuBuffer.CharUnifiedShadow
 
         private bool EnsureOutputCapacity()
         {
-            int instanceCapacity = Mathf.Max(1, m_InputProvider.SourceCapacity);
+            int instanceCapacity = Mathf.Max(1, RendererGpuBufferIndexRegistry.Capacity);
             bool resized = m_RangeStorage.EnsureCapacity(instanceCapacity);
             resized |= m_SampleStorage.EnsureCapacity(
                 instanceCapacity * CharUnifiedShadowGpuSource.MaxSampleCount);
@@ -215,7 +210,7 @@ namespace Rendering.MatDataTransfer.Runtime.GpuBuffer.CharUnifiedShadow
         private void RemoveDestroyedSources()
         {
             m_DeadSources.Clear();
-            foreach (CharUnifiedShadowGpuSource source in m_Sources.Keys)
+            foreach (CharUnifiedShadowGpuSource source in m_Sources)
             {
                 if (source == null)
                     m_DeadSources.Add(source);
@@ -232,13 +227,30 @@ namespace Rendering.MatDataTransfer.Runtime.GpuBuffer.CharUnifiedShadow
                 return;
 
             List<DebugReadbackTarget> targets = null;
-            foreach (KeyValuePair<CharUnifiedShadowGpuSource, SourceState> pair in m_Sources)
+            foreach (CharUnifiedShadowGpuSource source in m_Sources)
             {
-                if (pair.Key == null || !pair.Key.WantsGpuDebugReadback)
+                if (source == null
+                    || !source.WantsGpuDebugReadback
+                    || source.Renderers == null)
+                {
                     continue;
+                }
 
-                targets ??= new List<DebugReadbackTarget>();
-                targets.Add(new DebugReadbackTarget(pair.Key, pair.Value.Handle));
+                for (int i = 0; i < source.Renderers.Count; i++)
+                {
+                    Renderer renderer = source.Renderers[i];
+                    if (!RendererGpuBufferIndexRegistry.TryGetSlice(
+                            renderer,
+                            CharUnifiedShadowGpuSource.MaxSampleCount,
+                            out GpuBufferSlice sampleSlice))
+                    {
+                        continue;
+                    }
+
+                    targets ??= new List<DebugReadbackTarget>();
+                    targets.Add(new DebugReadbackTarget(source, renderer, sampleSlice));
+                    break;
+                }
             }
 
             if (targets == null || targets.Count == 0)
@@ -262,19 +274,26 @@ namespace Rendering.MatDataTransfer.Runtime.GpuBuffer.CharUnifiedShadow
             {
                 DebugReadbackTarget target = targets[i];
                 if (target.Source == null
-                    || !m_Sources.TryGetValue(target.Source, out SourceState state)
-                    || !state.Handle.Equals(target.Handle))
+                    || !m_Sources.Contains(target.Source)
+                    || target.Renderer == null
+                    || !RendererGpuBufferIndexRegistry.TryGetSlice(
+                        target.Renderer,
+                        CharUnifiedShadowGpuSource.MaxSampleCount,
+                        out GpuBufferSlice currentSlice)
+                    || !currentSlice.Equals(target.SampleSlice))
                 {
                     continue;
                 }
 
-                int offset = target.Handle.Index * CharUnifiedShadowGpuSource.MaxSampleCount;
-                if (offset < 0 || offset + CharUnifiedShadowGpuSource.MaxSampleCount > data.Length)
+                if (target.SampleSlice.Offset < 0
+                    || target.SampleSlice.Offset + target.SampleSlice.Count > data.Length)
+                {
                     continue;
+                }
 
-                var samples = new Vector4[CharUnifiedShadowGpuSource.MaxSampleCount];
+                var samples = new Vector4[target.SampleSlice.Count];
                 for (int sampleIndex = 0; sampleIndex < samples.Length; sampleIndex++)
-                    samples[sampleIndex] = data[offset + sampleIndex];
+                    samples[sampleIndex] = data[target.SampleSlice.Offset + sampleIndex];
                 target.Source.SetGpuDebugSamples(
                     samples,
                     target.Source.DebugSampleCount,
@@ -286,7 +305,8 @@ namespace Rendering.MatDataTransfer.Runtime.GpuBuffer.CharUnifiedShadow
         public void Dispose()
         {
             GpuBufferRuntime.Unregister(this);
-            m_RendererBinder.Dispose();
+            foreach (CharUnifiedShadowGpuSource source in m_Sources)
+                RendererGpuBufferIndexRegistry.Release(source);
             m_InputProvider.Dispose();
             m_RangeStorage.Dispose();
             m_SampleStorage.Dispose();

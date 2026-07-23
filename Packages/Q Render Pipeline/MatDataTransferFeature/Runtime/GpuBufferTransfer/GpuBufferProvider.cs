@@ -89,7 +89,7 @@ namespace Rendering.MatDataTransfer.Runtime.GpuBuffer
                 return false;
             }
 
-            slice = new GpuBufferSlice(handle.Index * m_ElementsPerSource, m_ElementsPerSource);
+            slice = GpuBufferSlice.FromIndex(handle.Index, m_ElementsPerSource);
             return true;
         }
 
@@ -113,8 +113,8 @@ namespace Rendering.MatDataTransfer.Runtime.GpuBuffer
                     continue;
                 }
 
-                int offset = state.Handle.Index * m_ElementsPerSource;
-                var context = new GpuBufferWriteContext<T>(m_Staging, offset, m_ElementsPerSource);
+                TryGetSlice(state.Handle, out GpuBufferSlice slice);
+                var context = new GpuBufferWriteContext<T>(m_Staging, slice);
                 context.Clear();
                 if (!state.Source.TryWriteGpuBufferData(context))
                     context.Clear();

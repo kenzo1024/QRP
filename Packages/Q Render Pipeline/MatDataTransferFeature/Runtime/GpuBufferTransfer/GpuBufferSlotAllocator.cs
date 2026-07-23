@@ -38,5 +38,11 @@ namespace Rendering.MatDataTransfer.Runtime.GpuBuffer
                 && handle.Index < m_Versions.Count
                 && m_Versions[handle.Index] == handle.Version;
         }
+
+        internal void Clear()
+        {
+            m_Versions.Clear();
+            m_FreeIndices.Clear();
+        }
     }
 }

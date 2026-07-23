@@ -36,7 +36,7 @@ namespace Rendering.MatDataTransfer.Runtime.GpuBuffer
         }
     }
 
-    public readonly struct GpuBufferSlice
+    public readonly struct GpuBufferSlice : IEquatable<GpuBufferSlice>
     {
         public int Offset { get; }
         public int Count { get; }
@@ -46,20 +46,60 @@ namespace Rendering.MatDataTransfer.Runtime.GpuBuffer
             Offset = offset;
             Count = count;
         }
+
+        internal static GpuBufferSlice FromIndex(int index, int elementsPerIndex)
+        {
+            if (index < 0)
+                throw new ArgumentOutOfRangeException(nameof(index));
+            if (elementsPerIndex <= 0)
+                throw new ArgumentOutOfRangeException(nameof(elementsPerIndex));
+
+            return new GpuBufferSlice(checked(index * elementsPerIndex), elementsPerIndex);
+        }
+
+        public GpuBufferSlice Scale(int factor)
+        {
+            if (factor <= 0)
+                throw new ArgumentOutOfRangeException(nameof(factor));
+
+            return new GpuBufferSlice(checked(Offset * factor), checked(Count * factor));
+        }
+
+        public bool Equals(GpuBufferSlice other)
+        {
+            return Offset == other.Offset && Count == other.Count;
+        }
+
+        public override bool Equals(object obj)
+        {
+            return obj is GpuBufferSlice other && Equals(other);
+        }
+
+        public override int GetHashCode()
+        {
+            unchecked
+            {
+                return (Offset * 397) ^ Count;
+            }
+        }
     }
 
     public readonly struct GpuBufferWriteContext<T> where T : unmanaged
     {
         private readonly T[] m_Data;
-        private readonly int m_Offset;
+        private readonly GpuBufferSlice m_Slice;
 
-        public int Count { get; }
+        public int Count => m_Slice.Count;
 
         internal GpuBufferWriteContext(T[] data, int offset, int count)
+            : this(data, new GpuBufferSlice(offset, count))
+        {
+        }
+
+        internal GpuBufferWriteContext(T[] data, GpuBufferSlice slice)
         {
             m_Data = data;
-            m_Offset = offset;
-            Count = count;
+            m_Slice = slice;
         }
 
         public void Set(int index, in T value)
@@ -67,12 +107,12 @@ namespace Rendering.MatDataTransfer.Runtime.GpuBuffer
             if ((uint)index >= (uint)Count)
                 throw new ArgumentOutOfRangeException(nameof(index));
 
-            m_Data[m_Offset + index] = value;
+            m_Data[m_Slice.Offset + index] = value;
         }
 
         public void Clear()
         {
-            Array.Clear(m_Data, m_Offset, Count);
+            Array.Clear(m_Data, m_Slice.Offset, m_Slice.Count);
         }
     }
 

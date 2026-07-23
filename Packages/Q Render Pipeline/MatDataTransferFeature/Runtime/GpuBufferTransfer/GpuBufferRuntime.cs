@@ -76,6 +76,7 @@ namespace Rendering.MatDataTransfer.Runtime.GpuBuffer
             if (commandBuffer == null)
                 throw new ArgumentNullException(nameof(commandBuffer));
 
+            RendererGpuBufferIndexRegistry.CollectGarbage();
             for (int i = 0; i < s_Passes.Count; i++)
             {
                 PassState state = s_Passes[i];
